@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Env — never commit secrets
+.env
+.env.*
+!.env.example
+
+# Builds
+dist/
+build/
+.next/
+out/
+.expo/
+.expo-shared/
+*.tsbuildinfo
+.turbo/
+
+# Runtime artifacts
+uploads/
+coverage/
+*.log
+logs/
+
+# Prisma
+apps/api/prisma/*.db
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Mobile build outputs
+*.apk
+*.aab
+*.ipa
+android/
+ios/

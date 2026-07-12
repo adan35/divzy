@@ -1,0 +1,425 @@
+// Divzy database schema.
+// Money: integer minor units (cents/yen/fils), max ±2_000_000_000 (fits INT4).
+// Soft deletes: expenses/settlements/comments keep history via deletedAt.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Users & auth
+// ---------------------------------------------------------------------------
+
+model User {
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  passwordHash       String
+  name               String
+  avatarColor        String   @default("#2a78d6")
+  defaultCurrency    String   @default("USD")
+  emailNotifications Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  refreshTokens      RefreshToken[]
+  pushTokens         PushToken[]
+  groupMemberships   GroupMember[]
+  createdGroups      Group[]            @relation("GroupCreator")
+  expensesPaid       ExpensePayer[]
+  expenseSplits      ExpenseSplit[]
+  createdExpenses    Expense[]          @relation("ExpenseCreator")
+  updatedExpenses    Expense[]          @relation("ExpenseUpdater")
+  settlementsFrom    Settlement[]       @relation("SettlementFrom")
+  settlementsTo      Settlement[]       @relation("SettlementTo")
+  createdSettlements Settlement[]       @relation("SettlementCreator")
+  comments           Comment[]
+  activities         ActivityLog[]      @relation("ActivityActor")
+  activityInbox      ActivityRecipient[]
+  notifications      Notification[]
+  friendshipsA       Friendship[]       @relation("FriendA")
+  friendshipsB       Friendship[]       @relation("FriendB")
+  recurringCreated   RecurringExpense[]
+}
+
+model RefreshToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  userAgent  String?
+  ip         String?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model PushToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Social graph
+// ---------------------------------------------------------------------------
+
+/// Invariant: userAId < userBId (lexicographic) — one row per pair.
+model Friendship {
+  id        String   @id @default(cuid())
+  userAId   String
+  userA     User     @relation("FriendA", fields: [userAId], references: [id], onDelete: Cascade)
+  userBId   String
+  userB     User     @relation("FriendB", fields: [userBId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userAId, userBId])
+  @@index([userBId])
+}
+
+// ---------------------------------------------------------------------------
+// Groups
+// ---------------------------------------------------------------------------
+
+enum GroupType {
+  TRIP
+  HOME
+  COUPLE
+  FRIENDS
+  PROJECT
+  OTHER
+}
+
+enum MemberRole {
+  ADMIN
+  MEMBER
+}
+
+model Group {
+  id            String    @id @default(cuid())
+  name          String
+  emoji         String    @default("🧾")
+  type          GroupType @default(OTHER)
+  currency      String    @default("USD")
+  inviteCode    String    @unique
+  simplifyDebts Boolean   @default(true)
+  createdById   String
+  createdBy     User      @relation("GroupCreator", fields: [createdById], references: [id])
+  archivedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  members    GroupMember[]
+  expenses   Expense[]
+  settlements Settlement[]
+  activities ActivityLog[]
+  recurring  RecurringExpense[]
+}
+
+model GroupMember {
+  id       String     @id @default(cuid())
+  groupId  String
+  group    Group      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     MemberRole @default(MEMBER)
+  joinedAt DateTime   @default(now())
+  leftAt   DateTime?
+
+  @@unique([groupId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Expenses
+// ---------------------------------------------------------------------------
+
+enum SplitType {
+  EQUAL
+  EXACT
+  PERCENT
+  SHARES
+  ADJUSTMENT
+  ITEMIZED
+}
+
+enum ExpenseCategory {
+  FOOD_DRINK
+  GROCERIES
+  TRANSPORT
+  HOME
+  RENT
+  UTILITIES
+  ENTERTAINMENT
+  TRAVEL
+  SHOPPING
+  HEALTH
+  EDUCATION
+  GIFTS
+  PETS
+  SUBSCRIPTIONS
+  GENERAL
+  OTHER
+}
+
+model Expense {
+  id                 String          @id @default(cuid())
+  groupId            String?
+  group              Group?          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  description        String
+  amount             Int
+  currency           String
+  category           ExpenseCategory @default(GENERAL)
+  date               DateTime
+  splitType          SplitType
+  notes              String?
+  receiptUrl         String?
+  createdById        String
+  createdBy          User            @relation("ExpenseCreator", fields: [createdById], references: [id])
+  updatedById        String?
+  updatedBy          User?           @relation("ExpenseUpdater", fields: [updatedById], references: [id])
+  recurringExpenseId String?
+  recurringExpense   RecurringExpense? @relation(fields: [recurringExpenseId], references: [id], onDelete: SetNull)
+  deletedAt          DateTime?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  payers   ExpensePayer[]
+  splits   ExpenseSplit[]
+  items    ExpenseItem[]
+  comments Comment[]
+
+  @@index([groupId, date(sort: Desc)])
+  @@index([date(sort: Desc)])
+  @@index([deletedAt])
+}
+
+model ExpensePayer {
+  id        String  @id @default(cuid())
+  expenseId String
+  expense   Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id])
+  amount    Int
+
+  @@unique([expenseId, userId])
+  @@index([userId])
+}
+
+model ExpenseSplit {
+  id         String  @id @default(cuid())
+  expenseId  String
+  expense    Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User    @relation(fields: [userId], references: [id])
+  amount     Int
+  shares     Int?
+  percentBps Int?
+  adjustment Int?
+
+  @@unique([expenseId, userId])
+  @@index([userId])
+}
+
+model ExpenseItem {
+  id             String   @id @default(cuid())
+  expenseId      String
+  expense        Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  name           String
+  amount         Int
+  participantIds String[]
+}
+
+// ---------------------------------------------------------------------------
+// Settlements
+// ---------------------------------------------------------------------------
+
+enum SettlementMethod {
+  CASH
+  BANK_TRANSFER
+  UPI
+  PAYPAL
+  VENMO
+  OTHER
+}
+
+model Settlement {
+  id          String           @id @default(cuid())
+  groupId     String?
+  group       Group?           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  fromUserId  String
+  fromUser    User             @relation("SettlementFrom", fields: [fromUserId], references: [id])
+  toUserId    String
+  toUser      User             @relation("SettlementTo", fields: [toUserId], references: [id])
+  amount      Int
+  currency    String
+  method      SettlementMethod @default(OTHER)
+  note        String?
+  date        DateTime
+  createdById String
+  createdBy   User             @relation("SettlementCreator", fields: [createdById], references: [id])
+  deletedAt   DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([groupId, date(sort: Desc)])
+  @@index([fromUserId])
+  @@index([toUserId])
+}
+
+// ---------------------------------------------------------------------------
+// Comments
+// ---------------------------------------------------------------------------
+
+model Comment {
+  id        String    @id @default(cuid())
+  expenseId String
+  expense   Expense   @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body      String
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([expenseId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Activity & notifications
+// ---------------------------------------------------------------------------
+
+enum ActivityType {
+  EXPENSE_ADDED
+  EXPENSE_UPDATED
+  EXPENSE_DELETED
+  SETTLEMENT_ADDED
+  SETTLEMENT_DELETED
+  GROUP_CREATED
+  GROUP_UPDATED
+  MEMBER_JOINED
+  MEMBER_LEFT
+  MEMBER_REMOVED
+  COMMENT_ADDED
+  FRIEND_ADDED
+  RECURRING_POSTED
+}
+
+model ActivityLog {
+  id           String       @id @default(cuid())
+  type         ActivityType
+  actorId      String
+  actor        User         @relation("ActivityActor", fields: [actorId], references: [id], onDelete: Cascade)
+  groupId      String?
+  group        Group?       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  expenseId    String?
+  settlementId String?
+  data         Json         @default("{}")
+  createdAt    DateTime     @default(now())
+
+  recipients ActivityRecipient[]
+
+  @@index([groupId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+}
+
+/// Fan-out on write: one row per user who should see the activity item.
+model ActivityRecipient {
+  id         String      @id @default(cuid())
+  activityId String
+  activity   ActivityLog @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([activityId, userId])
+  @@index([userId, activityId])
+}
+
+enum NotificationType {
+  EXPENSE_ADDED
+  EXPENSE_UPDATED
+  EXPENSE_DELETED
+  SETTLEMENT_RECORDED
+  COMMENT_ADDED
+  MEMBER_JOINED
+  ADDED_TO_GROUP
+  FRIEND_ADDED
+  RECURRING_POSTED
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String
+  data      Json             @default("{}")
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, readAt])
+}
+
+// ---------------------------------------------------------------------------
+// Recurring expenses
+// ---------------------------------------------------------------------------
+
+enum RecurrenceFrequency {
+  DAILY
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  YEARLY
+}
+
+model RecurringExpense {
+  id           String              @id @default(cuid())
+  groupId      String?
+  group        Group?              @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  description  String
+  amount       Int
+  currency     String
+  category     ExpenseCategory     @default(GENERAL)
+  splitType    SplitType
+  /// Array of { userId, amount } — validated against zExpensePayerInput.
+  payers       Json
+  /// Array of { userId, amount?, percentBps?, shares?, adjustment? }.
+  participants Json
+  notes        String?
+  frequency    RecurrenceFrequency
+  nextRunAt    DateTime
+  endDate      DateTime?
+  lastRunAt    DateTime?
+  active       Boolean             @default(true)
+  createdById  String
+  createdBy    User                @relation(fields: [createdById], references: [id])
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  expenses Expense[]
+
+  @@index([active, nextRunAt])
+}
+
+// ---------------------------------------------------------------------------
+// FX cache
+// ---------------------------------------------------------------------------
+
+model ExchangeRateCache {
+  id        String   @id @default(cuid())
+  base      String   @unique
+  rates     Json
+  fetchedAt DateTime
+}

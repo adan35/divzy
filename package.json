@@ -1,0 +1,44 @@
+{
+  "name": "divzy",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Divzy — split expenses with friends, minus the friction.",
+  "packageManager": "pnpm@10.34.4",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:api": "pnpm --filter @divzy/api dev",
+    "dev:web": "pnpm --filter @divzy/web dev",
+    "dev:mobile": "pnpm --filter @divzy/mobile start",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "db:migrate": "pnpm --filter @divzy/api db:migrate",
+    "db:seed": "pnpm --filter @divzy/api db:seed",
+    "db:studio": "pnpm --filter @divzy/api db:studio",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json,yml,yaml,css}\""
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "prisma",
+      "argon2",
+      "esbuild",
+      "sharp",
+      "unrs-resolver"
+    ],
+    "overrides": {
+      "react": "19.0.0",
+      "react-dom": "19.0.0"
+    }
+  }
+}

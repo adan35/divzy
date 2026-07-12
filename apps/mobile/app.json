@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "Divzy",
+    "slug": "divzy",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "divzy",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.divzy.mobile"
+    },
+    "android": {
+      "package": "app.divzy.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#2a78d6"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0d0d0d",
+          "imageWidth": 180
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

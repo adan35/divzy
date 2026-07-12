@@ -1,0 +1,133 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+   Divzy design tokens (docs/STYLE.md). Every color in the app flows through
+   these variables; components use the mapped Tailwind utilities only.
+--------------------------------------------------------------------------- */
+
+:root {
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f0efec;
+  --hairline: rgba(11, 11, 11, 0.1);
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #898781;
+  --brand: #2a78d6;
+  --brand-hover: #256abf;
+  --pos: #006300;
+  --neg: #d03b3b;
+  --danger: #d03b3b;
+  --warn: #c98500;
+
+  /* Soft tints (precomputed — var() colors can't take Tailwind alpha). */
+  --brand-soft: rgba(42, 120, 214, 0.1);
+  --pos-soft: rgba(0, 99, 0, 0.09);
+  --neg-soft: rgba(208, 59, 59, 0.09);
+  --warn-soft: rgba(201, 133, 0, 0.12);
+  --overlay: rgba(11, 11, 11, 0.4);
+  --page-veil: rgba(249, 249, 247, 0.85);
+
+  color-scheme: light;
+}
+
+.dark {
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-2: #242422;
+  --hairline: rgba(255, 255, 255, 0.1);
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --ink-3: #898781;
+  --brand: #3987e5;
+  --brand-hover: #5598e7;
+  --pos: #0ca30c;
+  --neg: #e66767;
+  --danger: #e66767;
+  --warn: #eda100;
+
+  --brand-soft: rgba(57, 135, 229, 0.16);
+  --pos-soft: rgba(12, 163, 12, 0.14);
+  --neg-soft: rgba(230, 103, 103, 0.14);
+  --warn-soft: rgba(237, 161, 0, 0.16);
+  --overlay: rgba(0, 0, 0, 0.6);
+  --page-veil: rgba(13, 13, 13, 0.85);
+
+  color-scheme: dark;
+}
+
+@layer base {
+  html {
+    height: 100%;
+  }
+
+  body {
+    min-height: 100%;
+    background-color: var(--page);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+      Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: var(--brand);
+    color: #ffffff;
+  }
+
+  /* Sensible default focus ring on keyboard navigation. */
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+
+  /* Native date-picker indicator legibility in dark mode. */
+  .dark input[type='date']::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+  }
+}
+
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Thin, token-colored scrollbars for internal scroll areas. */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--hairline) transparent;
+  }
+}
+
+/* Dialog / dropdown entrance animations. */
+@keyframes divzy-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes divzy-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-fade-in {
+  animation: divzy-fade-in 140ms ease-out;
+}
+
+.animate-pop-in {
+  animation: divzy-pop-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
