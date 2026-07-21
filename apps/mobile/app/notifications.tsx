@@ -17,10 +17,13 @@ import { EmptyState, ErrorState, SkeletonList } from '@/components/ui';
 import { formatRelative } from '@/lib/format';
 import {
   errorMessage,
+  useClearAllNotifications,
+  useClearNotification,
   useMarkAllNotificationsRead,
   useMarkNotificationRead,
   useNotificationsList,
 } from '@/lib/hooks';
+import { canClearAllNotifications } from '@/lib/notificationHeaderActions';
 import { fontSize, radii, spacing, useTheme } from '@/theme';
 
 function dataString(data: Record<string, unknown>, key: string): string | undefined {
@@ -35,6 +38,8 @@ export default function NotificationsScreen() {
   const listQuery = useNotificationsList();
   const markRead = useMarkNotificationRead();
   const markAllRead = useMarkAllNotificationsRead();
+  const clearNotification = useClearNotification();
+  const clearAll = useClearAllNotifications();
 
   const notifications = useMemo(
     () => (listQuery.data?.pages ?? []).flatMap((page) => page.items),
@@ -55,10 +60,33 @@ export default function NotificationsScreen() {
     }
   };
 
+  // WI-056 — clear is independent of the row's own tap-to-mark-read+navigate:
+  // this is its own Pressable nested inside the row's, so RN's responder
+  // negotiation gives it the touch first and `openNotification` never fires
+  // for a clear tap (no mark-read, no navigation — spec-WI-056 §4).
+  const handleClear = (notification: NotificationDto) => {
+    if (clearNotification.isPending) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    clearNotification.mutate(notification.id);
+  };
+
   const handleMarkAll = () => {
     if (!hasUnread || markAllRead.isPending) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
     markAllRead.mutate(undefined, {
+      onSuccess: () =>
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+          () => undefined,
+        ),
+    });
+  };
+
+  // WI-065 — independent of hasUnread: an all-read-but-uncleared list must
+  // still be clearable (see canClearAllNotifications).
+  const handleClearAll = () => {
+    if (!canClearAllNotifications(notifications.length, clearAll.isPending)) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    clearAll.mutate(undefined, {
       onSuccess: () =>
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
           () => undefined,
@@ -108,6 +136,30 @@ export default function NotificationsScreen() {
               ]}
             >
               Mark all read
+            </Text>
+          )}
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Clear all notifications"
+          disabled={!canClearAllNotifications(notifications.length, clearAll.isPending)}
+          onPress={handleClearAll}
+          hitSlop={8}
+        >
+          {({ pressed }) => (
+            <Text
+              style={[
+                styles.markAll,
+                {
+                  color: !canClearAllNotifications(notifications.length, clearAll.isPending)
+                    ? colors.ink3
+                    : pressed
+                      ? colors.ink
+                      : colors.ink2,
+                },
+              ]}
+            >
+              Clear all
             </Text>
           )}
         </Pressable>
@@ -190,6 +242,18 @@ export default function NotificationsScreen() {
                     {formatRelative(item.createdAt)}
                   </Text>
                 </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear notification"
+                  onPress={() => handleClear(item)}
+                  hitSlop={8}
+                  style={({ pressed }) => [
+                    styles.clearButton,
+                    { backgroundColor: pressed ? colors.surface2 : 'transparent' },
+                  ]}
+                >
+                  <Ionicons name="close" size={16} color={colors.ink3} />
+                </Pressable>
                 <Ionicons name="chevron-forward" size={16} color={colors.ink3} />
               </Pressable>
             );
@@ -253,6 +317,13 @@ const styles = StyleSheet.create({
   dotColumn: {
     width: 10,
     alignItems: 'center',
+  },
+  clearButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   unreadDot: {
     width: 8,

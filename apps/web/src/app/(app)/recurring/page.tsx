@@ -9,7 +9,6 @@ import {
   LIMITS,
   RECURRENCE_FREQUENCIES,
   categoryInfo,
-  formatMoney,
   type CreateRecurringInput,
   type ExpenseCategory,
   type PublicUserDto,
@@ -46,6 +45,7 @@ import {
 } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input } from '@/components/ui/input';
+import { MoneyText } from '@/components/ui/money-text';
 import { PageHeader } from '@/components/ui/page-header';
 import { Select } from '@/components/ui/select';
 import { Skeleton, SkeletonList } from '@/components/ui/skeleton';
@@ -126,13 +126,11 @@ function RecurringCard({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <p className="truncate text-sm font-medium text-ink">{recurring.description}</p>
-          {!recurring.active && <Badge>Paused</Badge>}
+          {!recurring.active && <Badge className="text-ink-3">Paused</Badge>}
         </div>
-        <p className="mt-0.5 text-[13px] text-ink-2">
-          <span className="font-medium tabular-nums text-ink">
-            {formatMoney(recurring.amount, recurring.currency)}
-          </span>{' '}
-          · {frequencyLabel(recurring.frequency)}
+        <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[13px] text-ink-2">
+          <MoneyText amount={recurring.amount} currency={recurring.currency} className="font-medium text-ink" />
+          <Badge variant="brand">{frequencyLabel(recurring.frequency)}</Badge>
         </p>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-ink-3">
           {recurring.active ? (
@@ -231,7 +229,10 @@ function NewRecurringDialog({
   const members: PublicUserDto[] = useMemo(() => {
     if (groupId) return group?.members.map((m) => m.user) ?? [];
     if (friendUserId && me && friend) {
-      return [{ id: me.id, name: me.name, avatarColor: me.avatarColor }, friend.user];
+      return [
+        { id: me.id, name: me.name, avatarColor: me.avatarColor, avatarUrl: me.avatarUrl },
+        friend.user,
+      ];
     }
     return [];
   }, [groupId, group, friendUserId, friend, me]);
@@ -572,7 +573,7 @@ function NewRecurringDialog({
                   {amount !== null && (
                     <p
                       className={cn(
-                        'text-right text-[13px] font-medium tabular-nums',
+                        'flex items-center justify-end gap-1 text-right text-[13px] font-medium',
                         payerSum === amount
                           ? 'text-pos'
                           : payerSum > amount
@@ -580,11 +581,19 @@ function NewRecurringDialog({
                             : 'text-warn',
                       )}
                     >
-                      {payerSum === amount
-                        ? 'Payments match the total ✓'
-                        : payerSum > amount
-                          ? `${formatMoney(payerSum - amount, currency)} over the total`
-                          : `${formatMoney(amount - payerSum, currency)} left to assign`}
+                      {payerSum === amount ? (
+                        'Payments match the total ✓'
+                      ) : payerSum > amount ? (
+                        <>
+                          <MoneyText amount={payerSum - amount} currency={currency} />
+                          over the total
+                        </>
+                      ) : (
+                        <>
+                          <MoneyText amount={amount - payerSum} currency={currency} />
+                          left to assign
+                        </>
+                      )}
                     </p>
                   )}
                 </div>

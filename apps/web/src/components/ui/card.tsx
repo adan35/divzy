@@ -7,7 +7,9 @@ export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        'rounded-xl2 border border-hairline bg-surface shadow-sm dark:shadow-none',
+        // WI-068 elevation: resting card shadow in light; dark elevates via
+        // border + machined top-edge highlight instead of shadows (§1.1).
+        'rounded-xl2 border border-hairline bg-surface shadow-card dark:shadow-top-edge',
         className,
       )}
       {...props}

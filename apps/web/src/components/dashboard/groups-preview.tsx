@@ -3,12 +3,14 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { CurrencyAmount, GroupSummaryDto } from '@divzy/shared';
-import { formatMoney } from '@divzy/shared';
+import { matchesBalanceFilter } from '@divzy/shared';
 import { useGroups } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
+import { collapsedBalanceEntries } from '@/lib/balance-display';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { MoneyText } from '@/components/ui/money-text';
 import { SkeletonList } from '@/components/ui/skeleton';
 import { balanceMagnitude } from './balance-utils';
 import { SectionError } from './section-error';
@@ -34,14 +36,10 @@ function GroupNet({ balances }: { balances: CurrencyAmount[] }) {
       {visible.map((b) => (
         <span
           key={b.currency}
-          className={cn(
-            'text-[13px] font-medium tabular-nums',
-            b.amount > 0 ? 'text-pos' : 'text-neg',
-          )}
+          className={cn('text-[13px] font-medium', b.amount > 0 ? 'text-pos' : 'text-neg')}
         >
-          {b.amount > 0
-            ? `You are owed ${formatMoney(b.amount, b.currency)}`
-            : `You owe ${formatMoney(-b.amount, b.currency)}`}
+          {b.amount > 0 ? 'You are owed ' : 'You owe '}
+          <MoneyText amount={Math.abs(b.amount)} currency={b.currency} />
         </span>
       ))}
       {more > 0 && (
@@ -69,22 +67,32 @@ function GroupRow({ group }: { group: GroupSummaryDto }) {
             {group.memberCount} {group.memberCount === 1 ? 'member' : 'members'}
           </span>
         </span>
-        <GroupNet balances={group.yourBalances} />
+        <GroupNet balances={collapsedBalanceEntries(group.yourBalanceConverted, group.yourBalances)} />
       </Card>
     </Link>
   );
 }
 
-/** "Your groups" — top groups by |balance| with the user's net per group. */
+/**
+ * "Your groups" — top groups by |balance| with the user's net per group.
+ *
+ * spec-WI-057: only groups where the viewer has a real outstanding balance
+ * appear — filtered via `matchesBalanceFilter(yourBalancesNative, 'outstanding')`,
+ * never the group-wide `settled` flag (WI-028), which is not viewer-specific.
+ */
 export function GroupsPreview() {
   const groups = useGroups();
   const router = useRouter();
 
   const active = (groups.data ?? []).filter((g) => g.archivedAt === null);
-  const top = [...active]
+  const outstanding = active.filter((g) =>
+    matchesBalanceFilter(g.yourBalancesNative ?? [], 'outstanding'),
+  );
+  const top = [...outstanding]
     .sort(
       (a, b) =>
-        balanceMagnitude(b.yourBalances) - balanceMagnitude(a.yourBalances) ||
+        balanceMagnitude(b.yourBalances, b.yourBalanceConverted) -
+          balanceMagnitude(a.yourBalances, a.yourBalanceConverted) ||
         (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? '') ||
         a.name.localeCompare(b.name),
     )
@@ -97,7 +105,7 @@ export function GroupsPreview() {
         <SkeletonList rows={3} />
       ) : groups.isError ? (
         <SectionError error={groups.error} onRetry={() => void groups.refetch()} />
-      ) : top.length === 0 ? (
+      ) : active.length === 0 ? (
         <EmptyState
           emoji="✈️"
           title="No groups yet"
@@ -107,6 +115,13 @@ export function GroupsPreview() {
               New group
             </Button>
           }
+          className="py-10"
+        />
+      ) : top.length === 0 ? (
+        <EmptyState
+          emoji="✅"
+          title="All settled up"
+          hint="No groups need settling right now."
           className="py-10"
         />
       ) : (

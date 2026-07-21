@@ -1,20 +1,45 @@
+import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { EXPENSE_CATEGORIES, type ExpenseCategory } from '@divzy/shared';
+import { type ExpenseCategory } from '@divzy/shared';
+import { categoryPickerGrid } from '@/lib/categoryPickerNarrowing';
+import { useUsedCategories } from '@/lib/hooks';
 import { fontSize, radii, spacing, useTheme, withAlpha } from '@/theme';
 
 export interface CategoryPickerProps {
   value: ExpenseCategory;
   onChange: (category: ExpenseCategory) => void;
+  /** Group expenses narrow to the group's used categories (WI-032-3); undefined never narrows. */
+  groupId?: string;
 }
 
-/** Emoji grid over the shared category table (4 per row). */
-export function CategoryPicker({ value, onChange }: CategoryPickerProps) {
+/**
+ * Emoji grid over the shared category table (4 per row). For a group
+ * expense, defaults to the group's used categories (plus the current form
+ * value) with a "more categories" cell revealing the full 16 — see
+ * spec-WI-032-3.
+ */
+export function CategoryPicker({ value, onChange, groupId }: CategoryPickerProps) {
   const { colors } = useTheme();
+  const usedQuery = useUsedCategories(groupId);
+  const [showAll, setShowAll] = useState(false);
+
+  const { cells, showFull } = useMemo(
+    () =>
+      categoryPickerGrid({
+        groupId,
+        value,
+        showAll,
+        usedCategories: usedQuery.data?.categories,
+        isLoading: usedQuery.isLoading,
+        isError: usedQuery.isError,
+      }),
+    [groupId, value, showAll, usedQuery.data, usedQuery.isLoading, usedQuery.isError],
+  );
 
   return (
     <View style={styles.grid}>
-      {EXPENSE_CATEGORIES.map((category) => {
+      {cells.map((category) => {
         const active = category.key === value;
         return (
           <Pressable
@@ -53,6 +78,28 @@ export function CategoryPicker({ value, onChange }: CategoryPickerProps) {
           </Pressable>
         );
       })}
+      {!showFull ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="More categories"
+          onPress={() => {
+            Haptics.selectionAsync().catch(() => undefined);
+            setShowAll(true);
+          }}
+          style={({ pressed }) => [
+            styles.cell,
+            {
+              borderColor: colors.hairline,
+              backgroundColor: pressed ? colors.surface2 : colors.surface,
+            },
+          ]}
+        >
+          <Text style={styles.emoji}>•••</Text>
+          <Text numberOfLines={1} style={[styles.label, { color: colors.ink2 }]}>
+            More
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

@@ -50,7 +50,7 @@ export const DateInput = forwardRef<HTMLInputElement, DateInputProps>(function D
         if (!Number.isNaN(picked.getTime())) onChange(picked.toISOString());
       }}
       className={cn(
-        'h-10 w-full rounded-[10px] border border-hairline bg-surface px-3 text-sm text-ink',
+        'h-10 w-full rounded-[10px] border border-hairline-strong bg-surface px-3 text-sm text-ink',
         'focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-soft',
         'disabled:cursor-not-allowed disabled:opacity-55',
         invalid && 'border-danger focus:border-danger focus:ring-neg-soft',

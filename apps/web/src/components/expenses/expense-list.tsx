@@ -6,17 +6,17 @@ import { Plus, Search } from 'lucide-react';
 import {
   categoryInfo,
   EXPENSE_CATEGORIES,
-  formatMoney,
   type ExpenseCategory,
   type ExpenseDto,
 } from '@divzy/shared';
 import { useAuth } from '@/lib/auth-store';
-import { errorMessage, useExpensesInfinite, type ExpenseFilters } from '@/lib/hooks';
+import { errorMessage, useExpensesInfinite, useUsedCategories, type ExpenseFilters } from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 import { AvatarStack } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
+import { MoneyText } from '@/components/ui/money-text';
 import { SkeletonList } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import { ExpenseDetailDialog } from './expense-detail';
@@ -42,13 +42,13 @@ function myLens(expense: ExpenseDto, meId: string | undefined) {
   return { involved, net: paid - (split?.amount ?? 0) };
 }
 
-function payerSummary(expense: ExpenseDto, meId: string | undefined): string {
+/** Who paid — the name/count half of "X paid $Y" (the amount renders separately via MoneyText). */
+function payerName(expense: ExpenseDto, meId: string | undefined): string {
   if (expense.payers.length > 1) {
-    return `${expense.payers.length} people paid ${formatMoney(expense.amount, expense.currency)}`;
+    return `${expense.payers.length} people`;
   }
   const payer = expense.payers[0];
-  const name = !payer ? 'Someone' : payer.user.id === meId ? 'You' : payer.user.name;
-  return `${name} paid ${formatMoney(expense.amount, expense.currency)}`;
+  return !payer ? 'Someone' : payer.user.id === meId ? 'You' : payer.user.name;
 }
 
 interface MonthGroup {
@@ -82,6 +82,23 @@ export function ExpenseList({ groupId, friendId, emptyHint }: ExpenseListProps) 
     search: debouncedSearch || undefined,
   };
   const query = useExpensesInfinite(filters);
+
+  // WI-063 + WI-064: every mount (group, friend, and the unscoped "All
+  // expenses" page) narrows the pill row to categories actually in use in
+  // that context (D1/D2/D3).
+  const usedCategories = useUsedCategories({ groupId, friendId }, { unscoped: true });
+
+  const shownCategories = useMemo(() => {
+    const used = new Set(usedCategories.data?.categories ?? []);
+    return EXPENSE_CATEGORIES.filter((c) => used.has(c.key));
+  }, [usedCategories.data]);
+
+  // D4: if the selected category drops out of the freshly-loaded used set,
+  // reset to "All" rather than leaving an invisible/stuck filter selected.
+  useEffect(() => {
+    if (!category || !usedCategories.data) return;
+    if (!usedCategories.data.categories.includes(category)) setCategory(undefined);
+  }, [category, usedCategories.data]);
 
   const expenses = useMemo(
     () => query.data?.pages.flatMap((page) => page.items) ?? [],
@@ -156,7 +173,7 @@ export function ExpenseList({ groupId, friendId, emptyHint }: ExpenseListProps) 
           >
             All
           </button>
-          {EXPENSE_CATEGORIES.map((c) => {
+          {shownCategories.map((c) => {
             const active = category === c.key;
             return (
               <button
@@ -237,7 +254,10 @@ export function ExpenseList({ groupId, friendId, emptyHint }: ExpenseListProps) 
                           {format(date, 'd')}
                         </span>
                       </span>
-                      <span aria-hidden="true" className="shrink-0 text-xl">
+                      <span
+                        aria-hidden="true"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-lg"
+                      >
                         {categoryInfo(expense.category).emoji}
                       </span>
                       <span className="min-w-0 flex-1">
@@ -247,9 +267,27 @@ export function ExpenseList({ groupId, friendId, emptyHint }: ExpenseListProps) 
                         <span className="mt-0.5 flex items-center gap-1.5 text-[13px] text-ink-3">
                           <AvatarStack users={expense.payers.map((p) => p.user)} size="xs" max={3} />
                           <span className="truncate">
-                            {payerSummary(expense, me?.id)}
+                            {payerName(expense, me?.id)} paid{' '}
+                            <MoneyText amount={expense.amount} currency={expense.currency} />
                             {!groupId && expense.group && (
                               <> · {expense.group.emoji} {expense.group.name}</>
+                            )}
+                            {/* Converted equivalent (WI-014) — omitted, not zeroed, when
+                                the server couldn't resolve a rate for this row. */}
+                            {expense.convertedAmount !== undefined && (
+                              <span className="ml-1 inline-flex items-center gap-1">
+                                <span aria-hidden="true">≈</span>
+                                <MoneyText amount={expense.convertedAmount} currency={expense.convertedCurrency!} />
+                                {expense.isApproximateRate && (
+                                  <span
+                                    className="font-semibold text-warn"
+                                    title="Approximate — today's rate; the rate on this expense's date isn't available"
+                                    aria-label="Approximate — today's rate; the rate on this expense's date isn't available"
+                                  >
+                                    *
+                                  </span>
+                                )}
+                              </span>
                             )}
                           </span>
                         </span>
@@ -264,14 +302,15 @@ export function ExpenseList({ groupId, friendId, emptyHint }: ExpenseListProps) 
                             <span className="text-[11px] leading-tight text-ink-3">
                               {lens.net > 0 ? 'you lent' : 'you borrowed'}
                             </span>
-                            <span
+                            <MoneyText
+                              amount={Math.abs(lens.net)}
+                              currency={expense.currency}
                               className={cn(
-                                'text-sm font-semibold leading-tight tabular-nums',
+                                'text-sm font-semibold leading-tight',
                                 lens.net > 0 ? 'text-pos' : 'text-neg',
                               )}
-                            >
-                              {formatMoney(Math.abs(lens.net), expense.currency)}
-                            </span>
+                            />
+                            <span className="text-[10px] leading-tight text-ink-3">at the time</span>
                           </>
                         )}
                       </span>

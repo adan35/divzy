@@ -17,6 +17,7 @@ import { AmountInput } from '@/components/ui/amount-input';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyText } from '@/components/ui/money-text';
 import { SegmentedControl } from '@/components/ui/segmented';
 import { cn } from '@/lib/utils';
 
@@ -341,14 +342,35 @@ function StepperButton({
   );
 }
 
-/** "left to assign" running indicator for EXACT / PERCENT modes. */
-function RemainingLine({ remaining, format }: { remaining: number; format: (v: number) => string }) {
+/**
+ * "left to assign" running indicator for EXACT / PERCENT modes (spec-WI-068:
+ * warn while short, pos once fully assigned — colors already matched the
+ * spec's warn->pos convention pre-retune; this just adds the MoneyText
+ * requirement for the EXACT (money) case via `currency`, keeping PERCENT's
+ * plain-text `formatPercent` unchanged since a percentage isn't money).
+ */
+function RemainingLine({
+  remaining,
+  currency,
+  formatPercent,
+}: {
+  remaining: number;
+  currency?: string;
+  formatPercent?: (v: number) => string;
+}) {
   if (remaining === 0) {
     return <p className="text-right text-[13px] font-medium text-pos">All assigned ✓</p>;
   }
+  const abs = Math.abs(remaining);
   return (
-    <p className={cn('text-right text-[13px] font-medium', remaining > 0 ? 'text-warn' : 'text-neg')}>
-      {format(Math.abs(remaining))} {remaining > 0 ? 'left to assign' : 'over'}
+    <p
+      className={cn(
+        'flex items-center justify-end gap-1 text-right text-[13px] font-medium',
+        remaining > 0 ? 'text-warn' : 'text-neg',
+      )}
+    >
+      {currency ? <MoneyText amount={abs} currency={currency} /> : formatPercent?.(abs)}
+      {remaining > 0 ? 'left to assign' : 'over'}
     </p>
   );
 }
@@ -583,15 +605,12 @@ export function SplitEditor({ members, meId, amount, currency, value, onChange }
       </div>
 
       {value.splitType === 'EXACT' && amount !== null && (
-        <RemainingLine
-          remaining={amount - exactAssigned}
-          format={(v) => formatMoney(v, currency)}
-        />
+        <RemainingLine remaining={amount - exactAssigned} currency={currency} />
       )}
       {value.splitType === 'PERCENT' && (
         <RemainingLine
           remaining={10000 - percentAssigned}
-          format={(v) => `${bpsToPercentText(v) || '0'}%`}
+          formatPercent={(v) => `${bpsToPercentText(v) || '0'}%`}
         />
       )}
 
@@ -701,7 +720,7 @@ export function SplitEditor({ members, meId, amount, currency, value, onChange }
                   <span className="truncate text-ink">{memberName(split.userId)}</span>
                 </span>
                 <span className="whitespace-nowrap text-ink-2">
-                  owes <span className="font-medium tabular-nums text-ink">{formatMoney(split.amount, currency)}</span>
+                  owes <MoneyText amount={split.amount} currency={currency} className="font-medium text-ink" />
                 </span>
               </li>
             ))}

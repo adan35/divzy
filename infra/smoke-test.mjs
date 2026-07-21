@@ -87,7 +87,7 @@ const { ana, sam, lee, zoe } = users;
 step('Auth: login + me + wrong password');
 {
   const { json } = await req('POST', '/api/v1/auth/login', {
-    body: { email: `ana.${run}@smoke.divzy.dev`, password: 'password123!' },
+    body: { identifier: `ana.${run}@smoke.divzy.dev`, password: 'password123!' },
   });
   assert(json.accessToken, 'login returns access token');
   ana.token = json.accessToken;
@@ -95,7 +95,7 @@ step('Auth: login + me + wrong password');
   const me = await req('GET', '/api/v1/auth/me', { token: ana.token });
   assertEq(me.json.email, `ana.${run}@smoke.divzy.dev`, 'me email');
   await req('POST', '/api/v1/auth/login', {
-    body: { email: `ana.${run}@smoke.divzy.dev`, password: 'wrong-password' },
+    body: { identifier: `ana.${run}@smoke.divzy.dev`, password: 'wrong-password' },
     expect: 401,
   });
   ok('wrong password → 401');
@@ -408,8 +408,19 @@ step('Non-group friend expense + friends list');
   const { json } = await req('GET', '/api/v1/friends', { token: ana.token });
   const zoeFriend = json.find((f) => f.user.id === zoe.id);
   assert(zoeFriend, 'zoe auto-added as friend via shared expense');
-  const usd = zoeFriend.balances.find((b) => b.currency === 'USD');
-  assertEq(usd?.amount, 1250, 'zoe owes ana 12.50 USD (friend balance +1250)');
+  // USD fully converts into ana's defaultCurrency, so the unconvertible-leftover
+  // `balances` array is empty and the converted figure lives in
+  // `balancesConverted` (spec-WI-001 GET /friends addendum, 2026-07-14).
+  assertEq(zoeFriend.balances.length, 0, 'no unconvertible leftover currencies');
+  assertEq(
+    zoeFriend.balancesConverted?.currency,
+    ana.defaultCurrency,
+    "converted balance is in ana's default currency",
+  );
+  assert(
+    zoeFriend.balancesConverted?.amount > 0,
+    'zoe owes ana 12.50 USD (positive converted friend balance)',
+  );
 
   const overall = await req('GET', '/api/v1/balance', { token: zoe.token });
   const owes = overall.json.youOwe.find((b) => b.currency === 'USD');

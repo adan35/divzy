@@ -5,6 +5,7 @@ import { useState } from 'react';
 import {
   Banknote,
   CreditCard,
+  FileText,
   HandCoins,
   Landmark,
   Smartphone,
@@ -20,6 +21,7 @@ import {
 } from '@divzy/shared';
 import { useDeleteSettlement, useSettlementsInfinite, errorMessage } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth-store';
+import { apiUrl } from '@/lib/api';
 import { formatDate } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -39,6 +41,13 @@ const METHOD_ICONS: Record<SettlementMethod, LucideIcon> = {
 
 function methodLabel(method: SettlementMethod): string {
   return SETTLEMENT_METHODS.find((m) => m.key === method)?.label ?? 'Other';
+}
+
+// WI-023: same PDF-vs-image detection as the expense detail dialog's
+// receipt block (expense-detail.tsx) — the proof reuses the exact same
+// upload endpoint/storage, so the same heuristic applies.
+function isPdfUrl(url: string): boolean {
+  return /\.pdf(\?.*)?$/i.test(url);
 }
 
 function SettlementRow({
@@ -94,6 +103,33 @@ function SettlementRow({
         currency={settlement.currency}
         className="shrink-0 text-sm font-medium text-ink"
       />
+      {/* WI-023: optional payment-proof view affordance — no new detail
+          screen (spec-WI-023 §2/§5), just an inline thumbnail (image) or
+          labeled link (PDF) mirroring ExpenseDetailDialog's receipt block. */}
+      {settlement.proofUrl && (
+        <a
+          href={apiUrl(settlement.proofUrl)}
+          target="_blank"
+          rel="noreferrer"
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-hairline p-1 pr-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-brand"
+        >
+          {isPdfUrl(settlement.proofUrl) ? (
+            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-surface-2 text-ink-2">
+              <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={apiUrl(settlement.proofUrl)}
+              alt="Payment proof"
+              className="h-7 w-7 rounded-md border border-hairline object-cover"
+            />
+          )}
+          <span className="text-[12px] font-medium">
+            {isPdfUrl(settlement.proofUrl) ? 'Proof (PDF)' : 'Proof'}
+          </span>
+        </a>
+      )}
       {canDelete && (
         <button
           type="button"
@@ -140,7 +176,7 @@ export function SettlementsSection({ friendId }: SettlementsSectionProps) {
 
   return (
     <section aria-label="Payments">
-      <h2 className="mb-3 text-[15px] font-semibold text-ink">Payments</h2>
+      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-3">Payments</h2>
 
       {settlements.isPending ? (
         <SkeletonList rows={2} />

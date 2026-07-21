@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import fastify, { type FastifyInstance } from 'fastify';
+import fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -29,18 +29,31 @@ import usersRoutes from './routes/users';
 
 const API_PREFIX = '/api/v1';
 
+/**
+ * WI-077 — gated on the explicit LOG_PRETTY opt-in flag, not NODE_ENV: a
+ * missing/misconfigured NODE_ENV must fail safe to lean JSON logging, never
+ * silently fall back to the synchronous, verbose pino-pretty debug
+ * transport. Pulled out as a pure function so the decision table is
+ * unit-testable without booting Fastify.
+ */
+export function resolveLoggerOptions(
+  config: Pick<typeof env, 'LOG_PRETTY' | 'NODE_ENV'>,
+): FastifyServerOptions['logger'] {
+  if (config.LOG_PRETTY) {
+    return {
+      level: 'debug',
+      transport: {
+        target: 'pino-pretty',
+        options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' },
+      },
+    };
+  }
+  return { level: config.NODE_ENV === 'test' ? 'silent' : 'info' };
+}
+
 export async function buildApp(): Promise<FastifyInstance> {
   const app = fastify({
-    logger:
-      env.NODE_ENV === 'development'
-        ? {
-            level: 'debug',
-            transport: {
-              target: 'pino-pretty',
-              options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' },
-            },
-          }
-        : { level: env.NODE_ENV === 'test' ? 'silent' : 'info' },
+    logger: resolveLoggerOptions(env),
     trustProxy: true,
   });
 

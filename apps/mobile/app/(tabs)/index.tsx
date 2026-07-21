@@ -9,11 +9,12 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { formatMoney, type CurrencyAmount } from '@divzy/shared';
+import { matchesBalanceFilter } from '@divzy/shared';
 import {
   Card,
   EmptyState,
   ErrorState,
+  PressableScale,
   Screen,
   SectionHeader,
   Skeleton,
@@ -21,11 +22,15 @@ import {
 } from '@/components/ui';
 import { GroupCard } from '@/components/groups/GroupCard';
 import { ActivityRow } from '@/components/groups/ActivityRow';
+import { SpendSnapshotChart } from '@/components/analytics/SpendSnapshotChart';
+import { PulseHero } from '@/components/home/PulseHero';
+import { ManualRatePromptDialog } from '@/components/settle/ManualRatePromptDialog';
 import { useAuth } from '@/lib/auth';
 import {
   errorMessage,
   useActivityInfinite,
   useGroups,
+  useManualRatePrompt,
   useOverallBalance,
   useUnreadCount,
 } from '@/lib/hooks';
@@ -39,19 +44,33 @@ function greetingForNow(): string {
   return 'Good evening';
 }
 
-function AmountList({ amounts, color, empty }: { amounts: CurrencyAmount[]; color: string; empty: string }) {
+/**
+ * WI-036 (notifications-activity slice) — layout slot for analytics' compact
+ * spend chart. Per spec §2 this is a self-contained sibling section, never a
+ * child/wrapper of the Recent Activity block below it: it takes no props
+ * threaded from the activity preview, shares no query key/hook with
+ * `useActivityInfinite`, and owns its own loading/error/empty states
+ * internally so a chart failure can never break the rest of the dashboard
+ * (independent failure domain). The bounded `maxHeight` below is a
+ * placeholder value — analytics owns the final visual and may replace this
+ * component's contents entirely; the height just must stay bounded and
+ * independent of feed content so it can't push Recent Activity unpredictably
+ * or reflow on data arrival.
+ *
+ * Hosts analytics' `SpendSnapshotChart` (self-fetching, self-contained —
+ * see that component's own doc comment for its loading/error/empty states).
+ * This slot owns placement only: the bounded, non-centered container below.
+ */
+function SpendChartSlot() {
   const { colors } = useTheme();
-  const nonZero = amounts.filter((a) => a.amount !== 0);
-  if (nonZero.length === 0) {
-    return <Text style={[styles.colEmpty, { color: colors.ink3 }]}>{empty}</Text>;
-  }
   return (
-    <View>
-      {nonZero.map((a) => (
-        <Text key={a.currency} style={[styles.colAmount, { color }]}>
-          {formatMoney(a.amount, a.currency)}
-        </Text>
-      ))}
+    <View
+      style={[
+        styles.chartSlot,
+        { backgroundColor: colors.surface, borderColor: colors.hairline },
+      ]}
+    >
+      <SpendSnapshotChart style={styles.chartSlotContent} />
     </View>
   );
 }
@@ -65,25 +84,24 @@ function QuickAction({
   label: string;
   onPress: () => void;
 }) {
-  const { colors } = useTheme();
+  const { colors, scheme } = useTheme();
+  // spec §1.1 brand-soft: 0.09 alpha light / 0.14 dark (mobile has no
+  // dedicated brandSoft token — soft washes are `withAlpha` at the call
+  // site, per the S1 foundation's documented convention).
+  const iconWash = withAlpha(colors.brand, scheme === 'light' ? 0.09 : 0.14);
   return (
-    <Pressable
-      accessibilityRole="button"
+    <PressableScale
       accessibilityLabel={label}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.quickAction,
-        { backgroundColor: colors.surface, borderColor: colors.hairline },
-        pressed && { backgroundColor: colors.surface2 },
-      ]}
+      style={[styles.quickAction, { backgroundColor: colors.surface, borderColor: colors.hairline }]}
     >
-      <View style={[styles.quickIcon, { backgroundColor: withAlpha(colors.brand, 0.14) }]}>
+      <View style={[styles.quickIcon, { backgroundColor: iconWash }]}>
         <Ionicons name={icon} size={19} color={colors.brand} />
       </View>
       <Text numberOfLines={1} style={[styles.quickLabel, { color: colors.ink }]}>
         {label}
       </Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -96,6 +114,12 @@ export default function HomeTab() {
   const groupsQ = useGroups();
   const activityQ = useActivityInfinite(null);
   const unreadQ = useUnreadCount();
+
+  const converted = balanceQ.data?.converted;
+  const { prompt: ratePrompt, dismiss: dismissRatePrompt } = useManualRatePrompt(
+    converted?.unresolved ?? [],
+    converted?.currency ?? null,
+  );
 
   const [refreshing, setRefreshing] = useState(false);
   const onRefresh = async () => {
@@ -119,6 +143,20 @@ export default function HomeTab() {
         .sort((a, b) => (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? '')),
     [groupsQ.data],
   );
+  // spec-WI-057 — the GROUPS strip must show only groups with a real
+  // outstanding balance for the viewer, not every active group. Evaluated
+  // over `yourBalancesNative` (native, unconverted per-currency net) — never
+  // `group.settled` (WI-028's group-WIDE flag: a group where the viewer is
+  // settled but two other members owe each other is `settled: false`, which
+  // would wrongly include it here) and never a converted figure (ARCH
+  // invariant 5). `activeGroups` itself stays unfiltered — it still feeds
+  // `isEmptyAccount` below, which must mean "no active groups at all", not
+  // "no groups with a balance" (a user with only settled groups is not an
+  // empty/onboarding account).
+  const outstandingGroups = useMemo(
+    () => activeGroups.filter((g) => matchesBalanceFilter(g.yourBalancesNative ?? [], 'outstanding')),
+    [activeGroups],
+  );
   const recentActivity = activityQ.data?.pages[0]?.items.slice(0, 10) ?? [];
   const unreadCount = unreadQ.data?.count ?? 0;
 
@@ -130,7 +168,6 @@ export default function HomeTab() {
     activeGroups.length === 0 &&
     recentActivity.length === 0;
 
-  const totals = (balanceQ.data?.totals ?? []).filter((t) => t.amount !== 0);
   const firstName = user?.name.split(/\s+/)[0] ?? 'there';
 
   return (
@@ -162,8 +199,10 @@ export default function HomeTab() {
         >
           <Ionicons name="notifications-outline" size={21} color={colors.ink} />
           {unreadCount > 0 ? (
-            <View style={[styles.badge, { backgroundColor: colors.danger, borderColor: colors.page }]}>
-              <Text style={styles.badgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+            <View style={[styles.badge, { backgroundColor: colors.brandFill, borderColor: colors.page }]}>
+              <Text style={[styles.badgeText, { color: colors.onBrand }]}>
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </Text>
             </View>
           ) : null}
         </Pressable>
@@ -181,6 +220,9 @@ export default function HomeTab() {
       ) : initialLoading ? (
         <View>
           <Skeleton height={148} radius={radii.xl} style={styles.skeletonHero} />
+          {/* spec-WI-068 §6 AC-6b: reserve the sparkline's own block too, so
+              Pulse's content arriving doesn't shift layout (CLS-safe). */}
+          <Skeleton height={64} radius={radii.md} style={styles.skeletonSparkline} />
           <View style={styles.skeletonActions}>
             <Skeleton height={72} radius={radii.xl} style={styles.skeletonAction} />
             <Skeleton height={72} radius={radii.xl} style={styles.skeletonAction} />
@@ -212,48 +254,23 @@ export default function HomeTab() {
             </Card>
           ) : (
             <Card style={styles.heroCard}>
-              <Text style={[styles.heroLabel, { color: colors.ink2 }]}>Total balance</Text>
-              {totals.length === 0 ? (
-                <Text style={[styles.heroSettled, { color: colors.ink }]}>
-                  You’re all settled up 🎉
-                </Text>
-              ) : (
-                totals.map((t) => (
-                  <View key={t.currency} style={styles.heroLine}>
-                    <Text
-                      style={[
-                        styles.heroAmount,
-                        { color: t.amount > 0 ? colors.pos : colors.neg },
-                      ]}
-                    >
-                      {formatMoney(Math.abs(t.amount), t.currency)}
-                    </Text>
-                    <Text style={[styles.heroSuffix, { color: colors.ink3 }]}>
-                      {t.amount > 0 ? 'owed to you' : 'you owe'}
-                    </Text>
-                  </View>
-                ))
-              )}
-              <View style={[styles.heroDivider, { backgroundColor: colors.hairline }]} />
-              <View style={styles.heroColumns}>
-                <View style={styles.heroCol}>
-                  <Text style={[styles.colLabel, { color: colors.ink3 }]}>You owe</Text>
-                  <AmountList
-                    amounts={balanceQ.data?.youOwe ?? []}
-                    color={colors.neg}
-                    empty="Nothing 🎉"
-                  />
-                </View>
-                <View style={[styles.heroColSep, { backgroundColor: colors.hairline }]} />
-                <View style={styles.heroCol}>
-                  <Text style={[styles.colLabel, { color: colors.ink3 }]}>You are owed</Text>
-                  <AmountList
-                    amounts={balanceQ.data?.youAreOwed ?? []}
-                    color={colors.pos}
-                    empty="Nothing yet"
-                  />
-                </View>
-              </View>
+              {/*
+                spec-WI-068 §6 mobile — Divzy Pulse replaces this card's
+                content (greeting block above stays untouched). Guarded on
+                `balanceQ.data` directly (rather than a `converted!`
+                assertion) so TS narrows `data.converted` etc. to defined —
+                the balance query is neither loading nor erroring in this
+                branch, so `data` is always present in practice.
+              */}
+              {balanceQ.data ? (
+                <PulseHero
+                  totals={balanceQ.data.totals}
+                  youOwe={balanceQ.data.youOwe}
+                  youAreOwed={balanceQ.data.youAreOwed}
+                  converted={balanceQ.data.converted}
+                  onSettle={() => router.push('/settle')}
+                />
+              ) : null}
             </Card>
           )}
 
@@ -283,7 +300,7 @@ export default function HomeTab() {
               onRetry={() => void groupsQ.refetch()}
               style={styles.inlineError}
             />
-          ) : activeGroups.length > 0 ? (
+          ) : outstandingGroups.length > 0 ? (
             <>
               <SectionHeader
                 title="GROUPS"
@@ -295,7 +312,7 @@ export default function HomeTab() {
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.groupsStrip}
               >
-                {activeGroups.slice(0, 6).map((group) => (
+                {outstandingGroups.slice(0, 6).map((group) => (
                   <GroupCard
                     key={group.id}
                     group={group}
@@ -305,7 +322,31 @@ export default function HomeTab() {
                 ))}
               </ScrollView>
             </>
+          ) : activeGroups.length > 0 ? (
+            // spec-WI-057 — distinct from the onboarding empty state
+            // (isEmptyAccount hero above): the viewer HAS active groups,
+            // they're just all settled up. Still shows the section header +
+            // "See all" so groups remain reachable.
+            <>
+              <SectionHeader
+                title="GROUPS"
+                actionLabel="See all"
+                onAction={() => router.push('/(tabs)/groups')}
+              />
+              <Text style={[styles.groupsSettledNote, { color: colors.ink3 }]}>
+                All settled up in your groups 🎉
+              </Text>
+            </>
           ) : null}
+
+          {/*
+            Spend chart slot (WI-036) — sibling section above Recent Activity,
+            not a wrapper/child of it. Self-contained; independent of the
+            feed's loading/error state (see SpendChartSlot doc comment).
+            Gated behind !isEmptyAccount so it matches web's isBrandNew ternary:
+            neither the chart nor Recent Activity renders on a brand-new account.
+          */}
+          {!isEmptyAccount && <SpendChartSlot />}
 
           {/* Recent activity */}
           {activityQ.isError ? (
@@ -330,6 +371,7 @@ export default function HomeTab() {
           ) : null}
         </>
       )}
+      <ManualRatePromptDialog prompt={ratePrompt} onClose={dismissRatePrompt} />
     </Screen>
   );
 }
@@ -377,7 +419,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 3,
   },
   badgeText: {
-    color: '#ffffff',
     fontSize: 10,
     fontWeight: '700',
   },
@@ -389,58 +430,6 @@ const styles = StyleSheet.create({
   },
   inlineError: {
     paddingVertical: spacing.xl,
-  },
-  heroLabel: {
-    fontSize: fontSize.sm,
-    fontWeight: '500',
-  },
-  heroSettled: {
-    fontSize: fontSize.xl,
-    fontWeight: '700',
-    marginTop: spacing.sm,
-  },
-  heroLine: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    marginTop: spacing.xs,
-  },
-  heroAmount: {
-    fontSize: fontSize.hero,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  heroSuffix: {
-    fontSize: fontSize.sm,
-    marginLeft: spacing.sm,
-  },
-  heroDivider: {
-    height: StyleSheet.hairlineWidth,
-    marginVertical: spacing.lg,
-  },
-  heroColumns: {
-    flexDirection: 'row',
-  },
-  heroCol: {
-    flex: 1,
-  },
-  heroColSep: {
-    width: StyleSheet.hairlineWidth,
-    marginHorizontal: spacing.lg,
-  },
-  colLabel: {
-    fontSize: fontSize.xs,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-    marginBottom: spacing.xs,
-  },
-  colAmount: {
-    fontSize: fontSize.lg,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
-    marginTop: 1,
-  },
-  colEmpty: {
-    fontSize: fontSize.sm,
   },
   quickRow: {
     flexDirection: 'row',
@@ -469,8 +458,27 @@ const styles = StyleSheet.create({
   groupsStrip: {
     paddingRight: spacing.lg,
   },
+  groupsSettledNote: {
+    fontSize: fontSize.sm,
+    marginTop: spacing.xs,
+  },
+  chartSlot: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.xs,
+    maxHeight: 160,
+    borderRadius: radii.xl,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    padding: spacing.md,
+  },
+  chartSlotContent: {
+    width: '100%',
+  },
   skeletonHero: {
     marginTop: spacing.xs,
+  },
+  skeletonSparkline: {
+    marginTop: spacing.md,
   },
   skeletonActions: {
     flexDirection: 'row',

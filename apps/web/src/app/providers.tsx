@@ -23,6 +23,14 @@ function ThemedToaster() {
       closeButton
       position="bottom-right"
       theme={resolvedTheme === 'dark' ? 'dark' : resolvedTheme === 'light' ? 'light' : 'system'}
+      // WI-068 §9.1: map richColors' success/error rings onto the design
+      // tokens (pos / danger) rather than sonner's own hardcoded palette.
+      toastOptions={{
+        classNames: {
+          success: 'ring-1 ring-pos',
+          error: 'ring-1 ring-danger',
+        },
+      }}
     />
   );
 }

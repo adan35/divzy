@@ -69,6 +69,11 @@ const envSchema = z.object({
   ),
 
   EXPO_PUSH_ENABLED: zBooleanFlag(true),
+
+  // WI-077 — deliberately NOT derived from NODE_ENV: logging verbosity must
+  // fail safe to the lean production profile if NODE_ENV is ever missing or
+  // misconfigured. Set explicitly to true for local dev (see .env.example).
+  LOG_PRETTY: zBooleanFlag(false),
 });
 
 export type Env = z.infer<typeof envSchema>;

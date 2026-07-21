@@ -1,27 +1,51 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
-import { ChevronRight, RefreshCw, UserPlus } from 'lucide-react';
-import type { FriendDto } from '@divzy/shared';
+import { useMemo, useState } from 'react';
+import { ChevronRight, QrCode, RefreshCw, UserPlus } from 'lucide-react';
+import { matchesBalanceFilter, type BalanceFilter, type FriendDto } from '@divzy/shared';
 import { useFriends, errorMessage } from '@/lib/hooks';
+import { collapsedBalanceEntries } from '@/lib/balance-display';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { MoneyText } from '@/components/ui/money-text';
 import { PageHeader } from '@/components/ui/page-header';
+import { Select } from '@/components/ui/select';
 import { SkeletonList } from '@/components/ui/skeleton';
 import { AddFriendDialog } from '@/components/friends/add-friend-dialog';
 import { BalanceSentence } from '@/components/friends/balance-sentence';
+import { FriendCodeDialog } from '@/components/friends/friend-code-dialog';
+import { FriendsBalanceSummary } from '@/components/friends/friends-balance-summary';
+
+const FRIEND_FILTER_LABELS: Record<BalanceFilter, string> = {
+  none: 'All friends',
+  outstanding: 'Any outstanding balance',
+  youOwe: 'Friends you owe',
+  owedYou: 'Friends who owe you',
+};
+
+const FRIEND_FILTER_EMPTY_HINT: Record<Exclude<BalanceFilter, 'none'>, string> = {
+  outstanding: 'No friends with an outstanding balance.',
+  youOwe: 'No friends you owe right now.',
+  owedYou: 'No friends who owe you right now.',
+};
 
 function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] ?? name;
 }
 
 function FriendRow({ friend }: { friend: FriendDto }) {
-  const nonZero = friend.balances.filter((b) => b.amount !== 0);
-  const visible = nonZero.slice(0, 2);
-  const more = nonZero.length - visible.length;
+  // WI-049 defect fix: previously read only `friend.balances` (post-WI-001
+  // this holds ONLY the unconvertible subset), so a fully-converted balance
+  // wrongly rendered "Settled up". `collapsedBalanceEntries` folds the
+  // converted figure back in first, then any unconvertible leftovers —
+  // mirrors mobile's `collapsedBalanceEntries` usage in FriendRow.
+  const entries = collapsedBalanceEntries(friend.balancesConverted, friend.balances);
+  const primary = entries[0];
+  const amountEntries = entries.slice(0, 2);
+  const moreAmounts = entries.length - amountEntries.length;
 
   return (
     <Link
@@ -31,27 +55,36 @@ function FriendRow({ friend }: { friend: FriendDto }) {
       <Avatar user={friend.user} size="md" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-ink">{friend.user.name}</p>
-        {nonZero.length === 0 ? (
+        {!primary ? (
           <p className="text-[13px] text-ink-3">Settled up</p>
         ) : (
-          <>
-            {visible.map((b) => (
-              <p key={b.currency} className="truncate text-[13px]">
-                <BalanceSentence
-                  name={firstName(friend.user.name)}
-                  amount={b.amount}
-                  currency={b.currency}
-                />
-              </p>
-            ))}
-            {more > 0 && (
-              <p className="text-xs text-ink-3">
-                +{more} more {more === 1 ? 'currency' : 'currencies'}
-              </p>
+          <p className="truncate text-[13px]">
+            <BalanceSentence
+              name={firstName(friend.user.name)}
+              amount={primary.amount}
+              currency={primary.currency}
+            />
+            {entries.length > 1 && (
+              <span className="text-ink-3"> · +{entries.length - 1} more</span>
             )}
-          </>
+          </p>
         )}
       </div>
+      {amountEntries.length > 0 && (
+        <div className="flex shrink-0 flex-col items-end gap-0.5">
+          {amountEntries.map((b) => (
+            <MoneyText
+              key={b.currency}
+              amount={b.amount}
+              currency={b.currency}
+              mode="signed-color"
+              className="text-[13px]"
+            />
+          ))}
+          {moreAmounts > 0 && <p className="text-xs text-ink-3">+{moreAmounts} more</p>}
+          {friend.usedFallbackRates && <p className="text-[11px] text-warn">est. rate</p>}
+        </div>
+      )}
       <ChevronRight className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
     </Link>
   );
@@ -60,6 +93,18 @@ function FriendRow({ friend }: { friend: FriendDto }) {
 export default function FriendsPage() {
   const friends = useFriends();
   const [addOpen, setAddOpen] = useState(false);
+  const [codeOpen, setCodeOpen] = useState(false);
+  const [filter, setFilter] = useState<BalanceFilter>('none');
+
+  // WI-037: a pure derived view over the live useFriends() cache — re-runs on
+  // every fresh fetch/invalidation, never a frozen snapshot. Evaluated over
+  // each friend's full native per-currency net (balancesNative), never the
+  // converted figure, so a mixed-currency friend correctly matches both
+  // direction filters.
+  const filtered = useMemo(
+    () => (friends.data ?? []).filter((f) => matchesBalanceFilter(f.balancesNative ?? [], filter)),
+    [friends.data, filter],
+  );
 
   return (
     <>
@@ -67,10 +112,16 @@ export default function FriendsPage() {
         title="Friends"
         subtitle="Everyone you split with, and where you stand."
         actions={
-          <Button onClick={() => setAddOpen(true)}>
-            <UserPlus className="h-4 w-4" aria-hidden="true" />
-            Add friend
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => setCodeOpen(true)}>
+              <QrCode className="h-4 w-4" aria-hidden="true" />
+              My code
+            </Button>
+            <Button onClick={() => setAddOpen(true)}>
+              <UserPlus className="h-4 w-4" aria-hidden="true" />
+              Add friend
+            </Button>
+          </>
         }
       />
 
@@ -97,14 +148,40 @@ export default function FriendsPage() {
           }
         />
       ) : (
-        <Card className="divide-y divide-hairline p-0">
-          {friends.data.map((f) => (
-            <FriendRow key={f.user.id} friend={f} />
-          ))}
-        </Card>
+        <div className="space-y-3">
+          <FriendsBalanceSummary friends={friends.data} />
+
+          <div className="flex justify-end">
+            <Select
+              aria-label="Filter friends"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value as BalanceFilter)}
+              className="w-56"
+            >
+              {(Object.keys(FRIEND_FILTER_LABELS) as BalanceFilter[]).map((f) => (
+                <option key={f} value={f}>
+                  {FRIEND_FILTER_LABELS[f]}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          {filtered.length === 0 ? (
+            <Card className="p-8 text-center text-sm text-ink-2">
+              {filter === 'none' ? 'No friends yet.' : FRIEND_FILTER_EMPTY_HINT[filter]}
+            </Card>
+          ) : (
+            <Card className="divide-y divide-hairline p-0">
+              {filtered.map((f) => (
+                <FriendRow key={f.user.id} friend={f} />
+              ))}
+            </Card>
+          )}
+        </div>
       )}
 
       <AddFriendDialog open={addOpen} onOpenChange={setAddOpen} />
+      <FriendCodeDialog open={codeOpen} onOpenChange={setCodeOpen} />
     </>
   );
 }

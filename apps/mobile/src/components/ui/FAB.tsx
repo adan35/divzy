@@ -12,7 +12,7 @@ export interface FABProps {
 
 /** Floating action button, bottom-right. */
 export function FAB({ onPress, icon = 'add', accessibilityLabel = 'Add', style }: FABProps) {
-  const { colors } = useTheme();
+  const { colors, scheme } = useTheme();
 
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
@@ -26,10 +26,10 @@ export function FAB({ onPress, icon = 'add', accessibilityLabel = 'Add', style }
       onPress={handlePress}
       style={({ pressed }) => [
         styles.fab,
-        {
-          backgroundColor: pressed ? colors.brandHover : colors.brand,
-          shadowColor: colors.ink,
-        },
+        // WI-068: fills consume brandFill/brandFillPressed (§1.1); dark
+        // elevation uses no shadows (§1.1) — the fill itself separates.
+        { backgroundColor: pressed ? colors.brandFillPressed : colors.brandFill },
+        scheme === 'light' && [styles.shadow, { shadowColor: colors.ink }],
         style,
       ]}
     >
@@ -48,7 +48,9 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowOpacity: 0.2,
+  },
+  shadow: {
+    shadowOpacity: 0.16,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
     elevation: 5,

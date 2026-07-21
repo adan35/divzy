@@ -7,22 +7,27 @@ import {
   zId,
   zListExpensesQuery,
   zUpdateExpenseInput,
+  zUsedCategoriesQuery,
 } from '@divzy/shared';
 import { recordActivity } from '../lib/activity';
 import { AppError } from '../lib/errors';
+import { enrichExpensesWithConverted } from '../lib/expense-conversion';
 import { paginate } from '../lib/pagination';
 import { prisma } from '../lib/prisma';
 import {
   commentInclude,
   expenseInclude,
+  expenseRevisionInclude,
   toCommentDto,
   toExpenseDto,
+  toExpenseRevisionDto,
   type ExpenseWithRelations,
 } from '../lib/serializers';
 import {
   assertCanSeeExpense,
   createExpense,
   deleteExpense,
+  restoreExpense,
   updateExpense,
 } from '../services/expense-service';
 
@@ -91,28 +96,77 @@ const routes: FastifyPluginAsync = async (app) => {
       ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
     });
     const { items, nextCursor } = paginate(rows, query.limit);
-    return { items: items.map(toExpenseDto), nextCursor };
+    const dtos = await enrichExpensesWithConverted(items.map(toExpenseDto), userId);
+    return { items: dtos, nextCursor };
   });
+
+  // -- GET /expenses/used-categories — cheap distinct-category aggregate (WI-032) --
+  app.get(
+    '/expenses/used-categories',
+    { preHandler: [app.authenticate] },
+    async (request) => {
+      const { groupId, friendId } = zUsedCategoriesQuery.parse(request.query);
+      const userId = request.userId;
+
+      const where: Prisma.ExpenseWhereInput = { deletedAt: null };
+      if (groupId) {
+        // Same active-member-or-404 gate as GET /expenses?groupId= (no existence leak).
+        const member = await prisma.groupMember.findFirst({
+          where: { groupId, userId, leftAt: null },
+          select: { id: true },
+        });
+        if (!member) throw new AppError(404, 'NOT_FOUND', 'Group not found');
+        where.groupId = groupId;
+      } else if (friendId) {
+        // friendId: same scope/gate as GET /expenses?friendId= — both users involved.
+        where.AND = [involvementFilter(userId), involvementFilter(friendId)];
+      } else {
+        // WI-064 unscoped: the exact population GET /expenses' default branch returns —
+        // every expense the caller is involved in or created, across all contexts.
+        where.OR = [
+          { payers: { some: { userId } } },
+          { splits: { some: { userId } } },
+          { createdById: userId },
+        ];
+      }
+
+      const rows = await prisma.expense.groupBy({ by: ['category'], where });
+      return { categories: rows.map((r) => r.category) };
+    },
+  );
 
   // -- POST /expenses ---------------------------------------------------------
   app.post('/expenses', { preHandler: [app.authenticate] }, async (request, reply) => {
     const input = zCreateExpenseInput.parse(request.body);
     const dto = await createExpense(request.userId, input);
-    return reply.status(201).send(dto);
+    const [enriched] = await enrichExpensesWithConverted([dto], request.userId);
+    return reply.status(201).send(enriched);
   });
 
   // -- GET /expenses/:expenseId ------------------------------------------------
+  // NO `deletedAt` filter (ADR-027 D6 / ADR-023 precedent): a soft-deleted-but-
+  // visible expense returns 200 with `deletedAt` populated, never 404. The
+  // visibility gate (assertCanSeeExpense) is unchanged and still governs
+  // 404-vs-200.
   app.get('/expenses/:expenseId', { preHandler: [app.authenticate] }, async (request) => {
     const { expenseId } = zExpenseParams.parse(request.params);
-    const expense = await loadVisibleExpense(expenseId, request.userId);
-    return toExpenseDto(expense);
+    const expense = await prisma.expense.findUnique({
+      where: { id: expenseId },
+      include: expenseInclude,
+    });
+    if (!expense) throw new AppError(404, 'NOT_FOUND', 'Expense not found');
+    await assertCanSeeExpense(request.userId, expense);
+    const [enriched] = await enrichExpensesWithConverted([toExpenseDto(expense)], request.userId);
+    return enriched;
   });
 
   // -- PATCH /expenses/:expenseId — full replacement of the payload fields ------
   app.patch('/expenses/:expenseId', { preHandler: [app.authenticate] }, async (request) => {
     const { expenseId } = zExpenseParams.parse(request.params);
     const input = zUpdateExpenseInput.parse(request.body);
-    return updateExpense(request.userId, expenseId, input);
+    const dto = await updateExpense(request.userId, expenseId, input);
+    const [enriched] = await enrichExpensesWithConverted([dto], request.userId);
+    return enriched;
   });
 
   // -- DELETE /expenses/:expenseId — soft delete ---------------------------------
@@ -120,6 +174,26 @@ const routes: FastifyPluginAsync = async (app) => {
     const { expenseId } = zExpenseParams.parse(request.params);
     await deleteExpense(request.userId, expenseId);
     return reply.status(204).send();
+  });
+
+  // -- POST /expenses/:expenseId/restore — undo a soft delete (ADR-027 D6) ------
+  app.post('/expenses/:expenseId/restore', { preHandler: [app.authenticate] }, async (request) => {
+    const { expenseId } = zExpenseParams.parse(request.params);
+    const dto = await restoreExpense(request.userId, expenseId);
+    const [enriched] = await enrichExpensesWithConverted([dto], request.userId);
+    return enriched;
+  });
+
+  // -- GET /expenses/:expenseId/history -------------------------------------------
+  app.get('/expenses/:expenseId/history', { preHandler: [app.authenticate] }, async (request) => {
+    const { expenseId } = zExpenseParams.parse(request.params);
+    await loadVisibleExpense(expenseId, request.userId);
+    const rows = await prisma.expenseRevision.findMany({
+      where: { expenseId },
+      include: expenseRevisionInclude,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    return rows.map(toExpenseRevisionDto);
   });
 
   // -- GET /expenses/:expenseId/comments ------------------------------------------

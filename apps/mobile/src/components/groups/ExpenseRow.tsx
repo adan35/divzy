@@ -49,30 +49,65 @@ export function ExpenseRow({ expense, currentUserId, onPress }: ExpenseRowProps)
       emoji={categoryInfo(expense.category).emoji}
       onPress={onPress}
       right={
-        !involved ? (
-          <Text style={[styles.lensLabel, { color: colors.ink3 }]}>not involved</Text>
-        ) : lens === 0 ? (
-          <Text style={[styles.lensLabel, { color: colors.ink3 }]}>settled</Text>
-        ) : (
-          <View style={styles.lens}>
-            <Text
-              style={[styles.lensLabel, { color: lens > 0 ? colors.pos : colors.neg }]}
-            >
-              {lens > 0 ? 'you lent' : 'you borrowed'}
-            </Text>
-            <Text
-              style={[styles.lensAmount, { color: lens > 0 ? colors.pos : colors.neg }]}
-            >
-              {formatMoney(Math.abs(lens), expense.currency)}
-            </Text>
-          </View>
-        )
+        <View style={styles.rightColumn}>
+          {expense.convertedAmount !== undefined ? (
+            <View style={styles.convertedRow}>
+              <Text style={[styles.convertedText, { color: colors.ink3 }]}>
+                ≈ {formatMoney(expense.convertedAmount, expense.convertedCurrency!)}
+              </Text>
+              {expense.isApproximateRate ? (
+                <Text
+                  accessibilityLabel="Approximate — today's rate; the rate on this expense's date isn't available"
+                  style={[styles.approxMarker, { color: colors.warning }]}
+                >
+                  *
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+          {!involved ? (
+            <Text style={[styles.lensLabel, { color: colors.ink3 }]}>not involved</Text>
+          ) : lens === 0 ? (
+            <Text style={[styles.lensLabel, { color: colors.ink3 }]}>settled</Text>
+          ) : (
+            <View style={styles.lens}>
+              <Text
+                style={[styles.lensLabel, { color: lens > 0 ? colors.pos : colors.neg }]}
+              >
+                {lens > 0 ? 'you lent' : 'you borrowed'}
+              </Text>
+              <Text
+                style={[styles.lensAmount, { color: lens > 0 ? colors.pos : colors.neg }]}
+              >
+                {formatMoney(Math.abs(lens), expense.currency)}
+              </Text>
+              <Text style={[styles.lensCaption, { color: colors.ink3 }]}>at the time</Text>
+            </View>
+          )}
+        </View>
       }
     />
   );
 }
 
 const styles = StyleSheet.create({
+  rightColumn: {
+    alignItems: 'flex-end',
+  },
+  convertedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  convertedText: {
+    fontSize: fontSize.xs,
+    fontVariant: ['tabular-nums'],
+  },
+  approxMarker: {
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    marginLeft: 2,
+  },
   lens: {
     alignItems: 'flex-end',
   },
@@ -83,6 +118,10 @@ const styles = StyleSheet.create({
     fontSize: fontSize.md,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
+    marginTop: 1,
+  },
+  lensCaption: {
+    fontSize: fontSize.xs,
     marginTop: 1,
   },
 });

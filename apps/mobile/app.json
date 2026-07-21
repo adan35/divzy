@@ -31,6 +31,12 @@
           "backgroundColor": "#0d0d0d",
           "imageWidth": 180
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Divzy uses your camera to scan a friend's QR add-code (spec-WI-040). No photos are taken or stored."
+        }
       ]
     ],
     "experiments": {

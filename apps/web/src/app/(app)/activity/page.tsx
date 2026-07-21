@@ -1,18 +1,25 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { isThisYear, isToday, isYesterday, format, parseISO } from 'date-fns';
 import { RefreshCw } from 'lucide-react';
-import { formatMoney, type ActivityDto } from '@divzy/shared';
+import type { ActivityDto } from '@divzy/shared';
+import { useAuth } from '@/lib/auth-store';
+import { resolveActivityDestination } from '@/lib/activity-nav';
 import { useActivityInfinite, errorMessage } from '@/lib/hooks';
 import { formatRelative } from '@/lib/format';
+import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { MoneyText } from '@/components/ui/money-text';
 import { PageHeader } from '@/components/ui/page-header';
 import { SkeletonList } from '@/components/ui/skeleton';
+import { ExpenseDetailDialog } from '@/components/expenses/expense-detail';
+import { SettlementDetailDialog } from '@/components/settle/settlement-detail';
 
 // ---------------------------------------------------------------------------
 // Payload readers — activity `data` is a loose bag; read it defensively.
@@ -23,7 +30,12 @@ function dataStr(data: Record<string, unknown>, key: string): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function dataMoney(data: Record<string, unknown>): string | null {
+interface MoneyPayload {
+  amount: number;
+  currency: string;
+}
+
+function dataMoney(data: Record<string, unknown>): MoneyPayload | null {
   const amount = data['amount'];
   const currency = data['currency'];
   if (
@@ -32,7 +44,7 @@ function dataMoney(data: Record<string, unknown>): string | null {
     typeof currency === 'string' &&
     currency.length === 3
   ) {
-    return formatMoney(amount, currency);
+    return { amount, currency };
   }
   return null;
 }
@@ -46,6 +58,10 @@ function GroupChip({ group }: { group: NonNullable<ActivityDto['group']> }) {
   return (
     <Link
       href={`/groups/${group.id}`}
+      // The chip sits inside a row that is itself clickable (WI-039) — stop
+      // the click from also bubbling up to the row's own open-detail handler
+      // so a chip click does exactly one thing: go to the group.
+      onClick={(e) => e.stopPropagation()}
       className="inline-flex max-w-[16rem] items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 align-middle text-xs font-medium text-ink-2 transition-colors hover:bg-brand-soft hover:text-brand"
     >
       <span aria-hidden="true">{group.emoji}</span>
@@ -58,8 +74,9 @@ function Desc({ text }: { text: string }) {
   return <span className="font-medium text-ink">&lsquo;{text}&rsquo;</span>;
 }
 
-function Money({ text }: { text: string }) {
-  return <span className="font-medium tabular-nums text-ink">{text}</span>;
+/** AC-4a: every rendered money figure goes through the shared MoneyText. */
+function Money({ money }: { money: MoneyPayload }) {
+  return <MoneyText amount={money.amount} currency={money.currency} className="font-medium text-ink" />;
 }
 
 /** The sentence after the actor's name, e.g. «added 'Groceries' in ✈️ Lisbon · $42.10». */
@@ -84,7 +101,7 @@ function activitySentence(activity: ActivityDto): ReactNode {
           {money && (
             <>
               {' '}
-              · <Money text={money} />
+              · <Money money={money} />
             </>
           )}
         </>
@@ -123,7 +140,7 @@ function activitySentence(activity: ActivityDto): ReactNode {
           {money && (
             <>
               {' '}
-              <Money text={money} />
+              <Money money={money} />
             </>
           )}
           {inGroup}
@@ -137,7 +154,7 @@ function activitySentence(activity: ActivityDto): ReactNode {
           {money && (
             <>
               {' '}
-              of <Money text={money} />
+              of <Money money={money} />
             </>
           )}
           {inGroup}
@@ -145,8 +162,11 @@ function activitySentence(activity: ActivityDto): ReactNode {
       );
     case 'GROUP_CREATED':
       return <>created {group ? <GroupChip group={group} /> : 'a group'}</>;
-    case 'GROUP_UPDATED':
-      return <>updated {group ? <GroupChip group={group} /> : 'a group'}</>;
+    case 'GROUP_UPDATED': {
+      const verb = data?.['deleted'] === true ? 'deleted'
+                 : data?.['archived'] === true ? 'archived' : 'updated';
+      return <>{verb} {group ? <GroupChip group={group} /> : 'a group'}</>;
+    }
     case 'MEMBER_JOINED':
       return <>joined {group ? <GroupChip group={group} /> : 'a group'}</>;
     case 'MEMBER_LEFT':
@@ -184,7 +204,7 @@ function activitySentence(activity: ActivityDto): ReactNode {
           {money && (
             <>
               {' '}
-              · <Money text={money} />
+              · <Money money={money} />
             </>
           )}
         </>
@@ -194,14 +214,37 @@ function activitySentence(activity: ActivityDto): ReactNode {
   }
 }
 
-function ActivityRow({ activity }: { activity: ActivityDto }) {
+function ActivityRow({ activity, onOpen }: { activity: ActivityDto; onOpen: () => void }) {
+  // WI-054: a struck-through row's original sentence stays (interim
+  // click-through to the existing dialog), just visually crossed out — the
+  // actor name is left untouched so "who did it" stays legible.
+  const deleted = activity.deletedAt !== null;
   return (
-    <div className="flex items-start gap-3 px-4 py-3.5">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className={cn(
+        'flex cursor-pointer items-start gap-3 border-l-2 border-transparent px-4 py-3.5 transition-colors hover:bg-surface-2',
+        // WI-055: actor-relative color accent. `deletedAt` forces colorHint
+        // null server-side, so this and the strikethrough above are already
+        // mutually exclusive — no extra guard needed here.
+        activity.colorHint === 'green' && 'border-pos',
+        activity.colorHint === 'red' && 'border-neg',
+        deleted && 'opacity-60',
+      )}
+    >
       <Avatar user={activity.actor} size="sm" className="mt-0.5" />
       <div className="min-w-0 flex-1">
         <p className="text-sm leading-relaxed text-ink-2">
           <span className="font-medium text-ink">{activity.actor.name}</span>{' '}
-          {activitySentence(activity)}
+          <span className={cn(deleted && 'line-through')}>{activitySentence(activity)}</span>
         </p>
         <p className="mt-0.5 text-xs text-ink-3">{formatRelative(activity.createdAt)}</p>
       </div>
@@ -245,13 +288,38 @@ function groupByDay(items: ActivityDto[]): DayGroup[] {
 // ---------------------------------------------------------------------------
 
 export default function ActivityPage() {
+  const router = useRouter();
+  const { user: me } = useAuth();
   const activity = useActivityInfinite(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const [detailExpenseId, setDetailExpenseId] = useState<string | null>(null);
+  const [detailSettlementId, setDetailSettlementId] = useState<string | null>(null);
 
   const items = activity.data?.pages.flatMap((p) => p.items) ?? [];
   const groups = groupByDay(items);
 
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = activity;
+
+  function openActivity(a: ActivityDto): void {
+    const destination = resolveActivityDestination(a, me?.id);
+    switch (destination.kind) {
+      case 'expense':
+        setDetailExpenseId(destination.expenseId);
+        break;
+      case 'settlement':
+        setDetailSettlementId(destination.settlementId);
+        break;
+      case 'group':
+        router.push(`/groups/${destination.groupId}`);
+        break;
+      case 'friend':
+        router.push(`/friends/${destination.friendId}`);
+        break;
+      case 'friends':
+        router.push('/friends');
+        break;
+    }
+  }
 
   // Auto-load the next page as the sentinel scrolls into view.
   useEffect(() => {
@@ -296,12 +364,12 @@ export default function ActivityPage() {
         <div className="space-y-6">
           {groups.map((group) => (
             <section key={group.key} aria-label={group.label}>
-              <h2 className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-ink-3">
+              <h2 className="mb-2 px-1 text-xs font-semibold uppercase tracking-[0.06em] text-ink-3">
                 {group.label}
               </h2>
               <Card className="divide-y divide-hairline p-0">
                 {group.items.map((a) => (
-                  <ActivityRow key={a.id} activity={a} />
+                  <ActivityRow key={a.id} activity={a} onOpen={() => openActivity(a)} />
                 ))}
               </Card>
             </section>
@@ -327,6 +395,22 @@ export default function ActivityPage() {
           )}
         </div>
       )}
+
+      <ExpenseDetailDialog
+        expenseId={detailExpenseId ?? ''}
+        open={detailExpenseId !== null}
+        onOpenChange={(open) => {
+          if (!open) setDetailExpenseId(null);
+        }}
+      />
+
+      <SettlementDetailDialog
+        settlementId={detailSettlementId ?? ''}
+        open={detailSettlementId !== null}
+        onOpenChange={(open) => {
+          if (!open) setDetailSettlementId(null);
+        }}
+      />
     </>
   );
 }

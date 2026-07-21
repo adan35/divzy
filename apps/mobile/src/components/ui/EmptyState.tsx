@@ -1,10 +1,17 @@
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
-import { fontSize, spacing, useTheme } from '@/theme';
+import { Ionicons } from '@expo/vector-icons';
+import { fontSize, radii, spacing, useTheme } from '@/theme';
 import { Button } from './Button';
 
 export interface EmptyStateProps {
-  /** Context emoji: 🧾 expenses, 👥 friends, ✈️ groups ... */
-  emoji: string;
+  /**
+   * Context emoji: 🧾 expenses, 👥 friends, ✈️ groups… Kept back-compat
+   * (WI-068): rendered inside a soft circle; prefer `icon` for new call
+   * sites (§12: no emoji as structural icons).
+   */
+  emoji?: string;
+  /** WI-068 (additive): Ionicons glyph, wins over `emoji` when both given. */
+  icon?: keyof typeof Ionicons.glyphMap;
   title: string;
   hint?: string;
   actionLabel?: string;
@@ -12,11 +19,27 @@ export interface EmptyStateProps {
   style?: StyleProp<ViewStyle>;
 }
 
-export function EmptyState({ emoji, title, hint, actionLabel, onAction, style }: EmptyStateProps) {
+export function EmptyState({
+  emoji,
+  icon,
+  title,
+  hint,
+  actionLabel,
+  onAction,
+  style,
+}: EmptyStateProps) {
   const { colors } = useTheme();
   return (
     <View style={[styles.root, style]}>
-      <Text style={styles.emoji}>{emoji}</Text>
+      {icon || emoji ? (
+        <View style={[styles.bubble, { backgroundColor: colors.surface2 }]}>
+          {icon ? (
+            <Ionicons name={icon} size={30} color={colors.ink2} />
+          ) : (
+            <Text style={styles.emoji}>{emoji}</Text>
+          )}
+        </View>
+      ) : null}
       <Text style={[styles.title, { color: colors.ink }]}>{title}</Text>
       {hint ? <Text style={[styles.hint, { color: colors.ink3 }]}>{hint}</Text> : null}
       {actionLabel && onAction ? (
@@ -33,9 +56,16 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xxl + spacing.lg,
     paddingHorizontal: spacing.xl,
   },
-  emoji: {
-    fontSize: 44,
+  bubble: {
+    width: 72,
+    height: 72,
+    borderRadius: radii.full,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: spacing.md,
+  },
+  emoji: {
+    fontSize: 34,
   },
   title: {
     fontSize: fontSize.lg,

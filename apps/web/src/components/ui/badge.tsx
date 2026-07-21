@@ -3,7 +3,14 @@
 import type { HTMLAttributes } from 'react';
 import { cn } from '@/lib/utils';
 
-export type BadgeVariant = 'default' | 'brand' | 'pos' | 'neg' | 'warn' | 'outline';
+export type BadgeVariant =
+  | 'default'
+  | 'brand'
+  | 'pos'
+  | 'neg'
+  | 'warn'
+  | 'accent'
+  | 'outline';
 
 export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   variant?: BadgeVariant;
@@ -15,6 +22,8 @@ const VARIANTS: Record<BadgeVariant, string> = {
   pos: 'bg-pos-soft text-pos',
   neg: 'bg-neg-soft text-neg',
   warn: 'bg-warn-soft text-warn',
+  /** WI-068 premium gold — insight chips / "settled" flourish (spec §1.1). */
+  accent: 'bg-accent-soft text-accent',
   outline: 'border border-hairline text-ink-2',
 };
 

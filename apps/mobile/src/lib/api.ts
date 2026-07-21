@@ -7,6 +7,13 @@ import { createDivzyClient } from '@divzy/api-client';
  */
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000';
 
+/**
+ * Web app origin — used only to build shareable links (e.g. the settle-up
+ * link/QR, spec-WI-016 §B) that open the same page on web. Never used for
+ * API calls. For a physical device set EXPO_PUBLIC_WEB_URL in .env.
+ */
+export const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_URL ?? 'http://localhost:3000';
+
 const ACCESS_TOKEN_KEY = 'divzy_at';
 const REFRESH_TOKEN_KEY = 'divzy_rt';
 

@@ -19,19 +19,18 @@ import {
   Sun,
   UserRound,
   Users,
+  X,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import type { NotificationDto } from '@divzy/shared';
 import { useAuth } from '@/lib/auth-store';
 import {
+  useClearAllNotifications,
   useLogout,
   useMarkAllNotificationsRead,
-  useMarkNotificationRead,
   useNotificationsList,
   useUnreadCount,
 } from '@/lib/hooks';
 import { useRealtimeSync } from '@/lib/socket';
-import { formatRelative } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -44,6 +43,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { FullPageSpinner, Spinner } from '@/components/ui/spinner';
 import { ExpenseEditorDialog } from '@/components/expenses/expense-editor';
+import { NotificationRow } from '@/components/notifications/notification-row';
 
 // ---------------------------------------------------------------------------
 // Navigation model
@@ -70,13 +70,16 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+// WI-068 §9.1: type-only wordmark treatment (no logo change) — ink text with
+// a restrained gold "." accent, replacing the plain brand-blue wordmark.
 function Wordmark({ className }: { className?: string }) {
   return (
     <Link
       href="/dashboard"
-      className={cn('select-none text-xl font-bold lowercase tracking-tight text-brand', className)}
+      className={cn('select-none text-xl font-bold lowercase tracking-tight text-ink', className)}
     >
       divzy
+      <span className="text-accent">.</span>
     </Link>
   );
 }
@@ -85,47 +88,12 @@ function Wordmark({ className }: { className?: string }) {
 // Notifications bell + dropdown
 // ---------------------------------------------------------------------------
 
-function NotificationRow({ notification }: { notification: NotificationDto }) {
-  const markRead = useMarkNotificationRead();
-  const unread = notification.readAt === null;
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        if (unread && !markRead.isPending) markRead.mutate(notification.id);
-      }}
-      className={cn(
-        'flex w-full items-start gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-surface-2',
-        !unread && 'opacity-75',
-      )}
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          'mt-1.5 h-2 w-2 shrink-0 rounded-full',
-          unread ? 'bg-brand' : 'bg-transparent',
-        )}
-      />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-ink">{notification.title}</span>
-        {notification.body && (
-          <span className="mt-0.5 block text-[13px] leading-snug text-ink-2 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
-            {notification.body}
-          </span>
-        )}
-        <span className="mt-0.5 block text-xs text-ink-3">
-          {formatRelative(notification.createdAt)}
-        </span>
-      </span>
-    </button>
-  );
-}
-
 function NotificationsMenu() {
   const [opened, setOpened] = useState(false);
   const unread = useUnreadCount();
-  const list = useNotificationsList();
+  const list = useNotificationsList(opened);
   const markAll = useMarkAllNotificationsRead();
+  const clearAll = useClearAllNotifications();
 
   const count = unread.data?.count ?? 0;
   const notifications = list.data?.pages.flatMap((p) => p.items) ?? [];
@@ -137,17 +105,18 @@ function NotificationsMenu() {
       onOpenChange={(open) => {
         if (open) {
           setOpened(true);
-          void list.refetch();
+          if (list.isStale) void list.refetch();
         }
       }}
       trigger={
         <span
-          className="relative inline-flex h-10 w-10 items-center justify-center rounded-[10px] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+          // WI-068 §12: icon-only controls meet the 44px touch-target floor.
+          className="relative inline-flex h-11 w-11 items-center justify-center rounded-[10px] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
           aria-label={count > 0 ? `Notifications (${count} unread)` : 'Notifications'}
         >
           <Bell className="h-5 w-5" aria-hidden="true" />
           {count > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-semibold text-white">
+            <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand-fill px-1 text-[10px] font-semibold text-on-brand">
               {count > 9 ? '9+' : count}
             </span>
           )}
@@ -156,17 +125,30 @@ function NotificationsMenu() {
     >
       <div className="flex items-center justify-between border-b border-hairline px-3.5 py-2.5">
         <span className="text-sm font-semibold text-ink">Notifications</span>
-        {count > 0 && (
-          <button
-            type="button"
-            onClick={() => markAll.mutate()}
-            disabled={markAll.isPending}
-            className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-brand transition-colors hover:bg-brand-soft disabled:opacity-55"
-          >
-            <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
-            Mark all read
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {count > 0 && (
+            <button
+              type="button"
+              onClick={() => markAll.mutate()}
+              disabled={markAll.isPending}
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-brand transition-colors hover:bg-brand-soft disabled:opacity-55"
+            >
+              <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
+              Mark all read
+            </button>
+          )}
+          {notifications.length > 0 && (
+            <button
+              type="button"
+              onClick={() => clearAll.mutate()}
+              disabled={clearAll.isPending}
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-55"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+              Clear all
+            </button>
+          )}
+        </div>
       </div>
       <div className="scrollbar-thin max-h-[380px] overflow-y-auto">
         {list.isLoading && opened ? (
@@ -317,10 +299,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                 href={href}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'flex items-center gap-3 rounded-[10px] px-3 py-2 text-sm font-medium transition-colors',
+                  // WI-068 §9.1: active pill + a 2px brand left indicator.
+                  // The border is always rendered (transparent when inactive)
+                  // so the indicator never shifts the row's padding/CLS.
+                  'flex items-center gap-3 rounded-[10px] border-l-2 px-3 py-2 text-sm font-medium transition-colors',
                   active
-                    ? 'bg-brand-soft text-brand'
-                    : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
+                    ? 'border-brand bg-brand-soft text-brand'
+                    : 'border-transparent text-ink-2 hover:bg-surface-2 hover:text-ink',
                 )}
               >
                 <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
@@ -387,7 +372,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
               type="button"
               aria-label="Add expense"
               onClick={() => setEditorOpen(true)}
-              className="-mt-5 flex h-12 w-12 items-center justify-center rounded-full bg-brand text-white shadow-lg transition-colors hover:bg-brand-hover"
+              className="-mt-5 flex h-12 w-12 items-center justify-center rounded-full bg-brand-fill text-on-brand shadow-pop transition-colors hover:bg-brand-fill-hover"
             >
               <Plus className="h-6 w-6" aria-hidden="true" />
             </button>

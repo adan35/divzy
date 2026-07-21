@@ -22,6 +22,8 @@ export interface AmountInputProps {
   /** 'lg' = hero amount field (expense editor); 'md' = inline rows. */
   size?: 'md' | 'lg';
   containerStyle?: StyleProp<ViewStyle>;
+  /** Read-only + dimmed, e.g. WI-012's "nothing outstanding" balance gate. */
+  disabled?: boolean;
 }
 
 function textFor(minor: number, currency: string): string {
@@ -44,6 +46,7 @@ export function AmountInput({
   placeholder = '0',
   size = 'lg',
   containerStyle,
+  disabled = false,
 }: AmountInputProps) {
   const { colors } = useTheme();
   const [text, setText] = useState(() => (value != null && value !== 0 ? textFor(value, currency) : ''));
@@ -87,7 +90,8 @@ export function AmountInput({
   };
 
   const large = size === 'lg';
-  const borderColor = error ? colors.danger : focused ? colors.brand : colors.hairline;
+  // WI-068 §1.1: hairlineStrong at rest, ring when focused (input border tier).
+  const borderColor = error ? colors.danger : focused ? colors.ring : colors.hairlineStrong;
 
   return (
     <View style={containerStyle}>
@@ -97,6 +101,7 @@ export function AmountInput({
           styles.field,
           large && styles.fieldLg,
           { backgroundColor: colors.surface, borderColor },
+          disabled && { opacity: 0.5 },
         ]}
       >
         <Text style={[styles.symbol, large && styles.symbolLg, { color: colors.ink3 }]}>
@@ -105,6 +110,7 @@ export function AmountInput({
         <TextInput
           value={text}
           onChangeText={handleChange}
+          editable={!disabled}
           keyboardType="decimal-pad"
           inputMode="decimal"
           autoFocus={autoFocus}
@@ -113,6 +119,7 @@ export function AmountInput({
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           accessibilityLabel={label ?? `Amount in ${info.code}`}
+          accessibilityState={{ disabled }}
           style={[styles.input, large && styles.inputLg, { color: colors.ink }]}
         />
       </View>

@@ -3,7 +3,15 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { formatMoney, LIMITS, type PublicUserDto, type SplitType } from '@divzy/shared';
-import { AmountInput, Avatar, Button, Input, SegmentedControl, Stepper } from '@/components/ui';
+import {
+  AmountInput,
+  Avatar,
+  Button,
+  Input,
+  MoneyText,
+  SegmentedControl,
+  Stepper,
+} from '@/components/ui';
 import { fontSize, radii, spacing, useTheme, withAlpha } from '@/theme';
 import {
   bpsToPercentText,
@@ -330,6 +338,7 @@ export function SplitEditor({ members, meId, amount, currency, value, onChange }
                 <Avatar
                   name={member.name}
                   color={member.avatarColor}
+                  avatarUrl={member.avatarUrl}
                   size={28}
                   style={[styles.memberAvatar, !checked && styles.dimmed]}
                 />
@@ -412,7 +421,12 @@ export function SplitEditor({ members, meId, amount, currency, value, onChange }
                         },
                       ]}
                     >
-                      <Avatar name={member.name} color={member.avatarColor} size={18} />
+                      <Avatar
+                        name={member.name}
+                        color={member.avatarColor}
+                        avatarUrl={member.avatarUrl}
+                        size={18}
+                      />
                       <Text
                         style={[
                           styles.personChipText,
@@ -483,17 +497,28 @@ export function SplitEditor({ members, meId, amount, currency, value, onChange }
             return (
               <View key={split.userId} style={styles.previewRow}>
                 <View style={styles.previewUser}>
-                  {user ? <Avatar name={user.name} color={user.avatarColor} size={20} /> : null}
+                  {user ? (
+                    <Avatar
+                      name={user.name}
+                      color={user.avatarColor}
+                      avatarUrl={user.avatarUrl}
+                      size={20}
+                    />
+                  ) : null}
                   <Text numberOfLines={1} style={[styles.previewName, { color: colors.ink }]}>
                     {memberName(split.userId)}
                   </Text>
                 </View>
-                <Text style={[styles.previewOwes, { color: colors.ink2 }]}>
-                  owes{' '}
-                  <Text style={[styles.previewAmount, { color: colors.ink }]}>
-                    {formatMoney(split.amount, currency)}
-                  </Text>
-                </Text>
+                <View style={styles.previewOwesRow}>
+                  <Text style={[styles.previewOwes, { color: colors.ink2 }]}>owes </Text>
+                  <MoneyText
+                    amount={split.amount}
+                    currency={currency}
+                    colored={false}
+                    size={fontSize.sm}
+                    weight="600"
+                  />
+                </View>
               </View>
             );
           })}
@@ -685,12 +710,12 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     flexShrink: 1,
   },
+  previewOwesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   previewOwes: {
     fontSize: fontSize.sm,
-  },
-  previewAmount: {
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
   },
   evaluationError: {
     fontSize: fontSize.sm,

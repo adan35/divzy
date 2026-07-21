@@ -188,7 +188,12 @@ function EditorForm({ groupId, friendId, expense }: EditorFormProps) {
       return [...map.values()];
     }
     if (ctxFriendId && me && friendUser) {
-      map.set(me.id, { id: me.id, name: me.name, avatarColor: me.avatarColor });
+      map.set(me.id, {
+        id: me.id,
+        name: me.name,
+        avatarColor: me.avatarColor,
+        avatarUrl: me.avatarUrl,
+      });
       map.set(friendUser.id, friendUser);
       return [...map.values()];
     }
@@ -400,7 +405,7 @@ function EditorForm({ groupId, friendId, expense }: EditorFormProps) {
 
         <View>
           <Text style={[styles.sectionLabel, { color: colors.ink2 }]}>Category</Text>
-          <CategoryPicker value={category} onChange={setCategory} />
+          <CategoryPicker value={category} onChange={setCategory} groupId={ctxGroupId} />
         </View>
 
         {!contextChosen ? (

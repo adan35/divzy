@@ -1,4 +1,4 @@
-import { useMemo, type ReactElement } from 'react';
+import { useMemo, useRef, type ReactElement } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -8,16 +8,14 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { format, parseISO } from 'date-fns';
 import type { ExpenseDto } from '@divzy/shared';
 import { EmptyState, ErrorState, SkeletonList } from '@/components/ui';
+import { buildExpenseRows, type MonthEntry, type SectionRow } from '@/lib/expenseSectionRows';
 import { errorMessage, useExpensesInfinite, type ExpenseFilters } from '@/lib/hooks';
 import { fontSize, spacing, useTheme } from '@/theme';
 import { ExpenseRow } from './ExpenseRow';
 
-type Row =
-  | { kind: 'month'; key: string; label: string }
-  | { kind: 'expense'; expense: ExpenseDto };
+type Row = SectionRow<ExpenseDto>;
 
 export interface ExpenseSectionListProps {
   filters: ExpenseFilters;
@@ -60,27 +58,12 @@ export function ExpenseSectionList({
     refetch,
   } = useExpensesInfinite(filters);
 
+  const rowCacheRef = useRef<Map<string, MonthEntry>>(new Map());
+
   const rows = useMemo<Row[]>(() => {
     const expenses = data?.pages.flatMap((page) => page.items) ?? [];
-    const out: Row[] = [];
-    let currentMonth = '';
-    for (const expense of expenses) {
-      let monthKey: string;
-      let monthLabel: string;
-      try {
-        const date = parseISO(expense.date);
-        monthKey = format(date, 'yyyy-MM');
-        monthLabel = format(date, 'MMMM yyyy');
-      } catch {
-        monthKey = 'unknown';
-        monthLabel = 'Earlier';
-      }
-      if (monthKey !== currentMonth) {
-        currentMonth = monthKey;
-        out.push({ kind: 'month', key: `month-${monthKey}`, label: monthLabel });
-      }
-      out.push({ kind: 'expense', expense });
-    }
+    const { rows: out, cache } = buildExpenseRows(expenses, rowCacheRef.current);
+    rowCacheRef.current = cache;
     return out;
   }, [data]);
 

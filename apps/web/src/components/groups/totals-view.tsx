@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from 'react';
 import { RefreshCw } from 'lucide-react';
-import { formatMoney, type PublicUserDto } from '@divzy/shared';
+import type { PublicUserDto } from '@divzy/shared';
 import { errorMessage, useExpensesInfinite, useGroup } from '@/lib/hooks';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { MoneyText } from '@/components/ui/money-text';
 import { Skeleton, SkeletonList } from '@/components/ui/skeleton';
+import { GroupMonthlyChart } from './group-monthly-chart';
 
 export interface TotalsViewProps {
   groupId: string;
@@ -125,14 +126,23 @@ export function TotalsView({ groupId }: TotalsViewProps) {
 
   return (
     <div className="space-y-6">
+      {/* WI-059: monthly total-expenditure chart, one shared group-wide
+          figure requested in the group's home currency (D3), not the
+          viewer's default — see group-monthly-chart.tsx. Mounted only in
+          this non-empty branch, inheriting the `expenses.length === 0`
+          guard above. */}
+      <GroupMonthlyChart groupId={groupId} currency={groupCurrency} />
+
       {/* Per-currency spend tiles */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {totalEntries.map(([currency, { amount, count }]) => (
           <Card key={currency} className="p-5">
             <p className="text-[13px] text-ink-2">Total spent · {currency}</p>
-            <p className="mt-1 text-[28px] font-semibold leading-tight tracking-tight text-ink tabular-nums">
-              {formatMoney(amount, currency)}
-            </p>
+            <MoneyText
+              amount={amount}
+              currency={currency}
+              className="mt-1 block text-[28px] font-semibold leading-tight tracking-tight text-ink"
+            />
             <p className="mt-1 text-[13px] text-ink-3">
               {count} expense{count === 1 ? '' : 's'}
             </p>

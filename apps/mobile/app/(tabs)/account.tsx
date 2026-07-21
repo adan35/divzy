@@ -7,9 +7,9 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import { AVATAR_COLORS, LIMITS } from '@divzy/shared';
 import {
   Avatar,
@@ -17,12 +17,17 @@ import {
   Card,
   CurrencyPicker,
   Input,
-  ListItem,
   Screen,
   SectionHeader,
 } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
-import { errorMessage, useChangePassword, useUpdateMe } from '@/lib/hooks';
+import {
+  errorMessage,
+  useChangePassword,
+  useUpdateMe,
+  useUploadAvatar,
+} from '@/lib/hooks';
+import { validateAvatarFile } from '@/lib/avatarUpload';
 import { fontSize, spacing, useTheme, withAlpha } from '@/theme';
 
 function Banner({ text, tone }: { text: string; tone: 'danger' | 'pos' }) {
@@ -36,14 +41,28 @@ function Banner({ text, tone }: { text: string; tone: 'danger' | 'pos' }) {
 }
 
 export default function AccountTab() {
-  const router = useRouter();
   const { colors } = useTheme();
   const { user, signOut } = useAuth();
 
   const profileMutation = useUpdateMe();
   const currencyMutation = useUpdateMe();
   const notificationsMutation = useUpdateMe();
+  const remindersMutation = useUpdateMe();
+  // WI-045 — its OWN mutation instance, same one-instance-per-control rule as
+  // every other PREFERENCES control on this screen: a pending/error phone
+  // save must never couple to name/currency/notification/reminder state.
+  const phoneMutation = useUpdateMe();
   const changePassword = useChangePassword();
+
+  // Avatar upload (WI-035) — its OWN mutation instances, separate from every
+  // other control on this screen (profile/currency/notifications/reminders
+  // above each already follow this same one-instance-per-control rule): a
+  // shared instance would couple this control's pending/disabled state to
+  // unrelated controls (known recurring defect, flagged in the design + DRB
+  // review).
+  const avatarUpload = useUploadAvatar();
+  const avatarMutation = useUpdateMe();
+  const [avatarError, setAvatarError] = useState<string | null>(null);
 
   // Profile edit state
   const [editing, setEditing] = useState(false);
@@ -60,6 +79,11 @@ export default function AccountTab() {
   const [passwordSuccess, setPasswordSuccess] = useState(false);
 
   const [prefsError, setPrefsError] = useState<string | null>(null);
+
+  // Phone edit state (WI-045)
+  const [phoneEditing, setPhoneEditing] = useState(false);
+  const [phoneDraft, setPhoneDraft] = useState('');
+  const [phoneError, setPhoneError] = useState<string | null>(null);
 
   if (!user) {
     return (
@@ -97,6 +121,126 @@ export default function AccountTab() {
     );
   };
 
+  // -- Phone number (WI-045) ---------------------------------------------------
+
+  const startPhoneEditing = () => {
+    setPhoneDraft(user.phone ?? '');
+    setPhoneError(null);
+    setPhoneEditing(true);
+  };
+
+  const cancelPhoneEditing = () => {
+    setPhoneEditing(false);
+    setPhoneError(null);
+  };
+
+  const savePhone = () => {
+    const trimmed = phoneDraft.trim();
+    // Empty input clears the phone (sends null); a non-empty value is
+    // forwarded as-is — zPhone (server + shared schema) owns format
+    // validation/normalization, no duplicate regex here.
+    const next = trimmed.length === 0 ? null : trimmed;
+    setPhoneError(null);
+    phoneMutation.mutate(
+      { phone: next },
+      {
+        onSuccess: () => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+            () => undefined,
+          );
+          setPhoneEditing(false);
+        },
+        onError: (err) => setPhoneError(errorMessage(err)),
+      },
+    );
+  };
+
+  // -- Avatar upload / replace / remove (WI-035) ------------------------------
+
+  const applyAvatarUrl = (url: string | null) => {
+    setAvatarError(null);
+    avatarMutation.mutate(
+      { avatarUrl: url },
+      {
+        onSuccess: () => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+            () => undefined,
+          );
+        },
+        onError: (err) => setAvatarError(errorMessage(err)),
+      },
+    );
+  };
+
+  const handlePickedAvatar = (asset: ImagePicker.ImagePickerAsset) => {
+    setAvatarError(null);
+    // Client-side pre-validation (size + MIME) — fast feedback before a
+    // network round trip. The server independently re-validates regardless
+    // (defense in depth, WI-035 §5).
+    const validation = validateAvatarFile({ mimeType: asset.mimeType, size: asset.fileSize });
+    if (!validation.ok) {
+      setAvatarError(validation.message ?? 'That image cannot be used.');
+      return;
+    }
+    const extension = asset.uri.split('.').pop()?.toLowerCase() ?? 'jpg';
+    const name = asset.fileName ?? `avatar-${Date.now()}.${extension}`;
+    const type = asset.mimeType ?? 'image/jpeg';
+    avatarUpload.mutate(
+      { uri: asset.uri, name, type },
+      {
+        onSuccess: (res) => applyAvatarUrl(res.url),
+        onError: (err) => setAvatarError(errorMessage(err)),
+      },
+    );
+  };
+
+  const pickAvatarFromLibrary = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+        allowsEditing: true,
+        aspect: [1, 1],
+      });
+      const asset = result.assets?.[0];
+      if (!result.canceled && asset) handlePickedAvatar(asset);
+    } catch {
+      setAvatarError('Could not open your photo library.');
+    }
+  };
+
+  const takeAvatarPhoto = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        setAvatarError('Camera access is needed to take a profile photo.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        quality: 0.8,
+        allowsEditing: true,
+        aspect: [1, 1],
+      });
+      const asset = result.assets?.[0];
+      if (!result.canceled && asset) handlePickedAvatar(asset);
+    } catch {
+      setAvatarError('Could not open the camera.');
+    }
+  };
+
+  const openAvatarPicker = () => {
+    setAvatarError(null);
+    Alert.alert(user.avatarUrl ? 'Change profile photo' : 'Add profile photo', undefined, [
+      { text: 'Take photo', onPress: () => void takeAvatarPhoto() },
+      { text: 'Choose from library', onPress: () => void pickAvatarFromLibrary() },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const removeAvatar = () => applyAvatarUrl(null);
+
+  const avatarBusy = avatarUpload.isPending || avatarMutation.isPending;
+
   const changeCurrency = (code: string) => {
     if (code === user.defaultCurrency) return;
     setPrefsError(null);
@@ -117,6 +261,16 @@ export default function AccountTab() {
     setPrefsError(null);
     notificationsMutation.mutate(
       { emailNotifications: value },
+      {
+        onError: (err) => setPrefsError(errorMessage(err)),
+      },
+    );
+  };
+
+  const toggleStaleBalanceReminders = (value: boolean) => {
+    setPrefsError(null);
+    remindersMutation.mutate(
+      { staleBalanceRemindersEnabled: value },
       {
         onError: (err) => setPrefsError(errorMessage(err)),
       },
@@ -150,7 +304,7 @@ export default function AccountTab() {
   };
 
   const confirmSignOut = () => {
-    Alert.alert('Sign out?', 'You can log back in anytime.', [
+    Alert.alert('Sign out?', undefined, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Sign out',
@@ -172,6 +326,7 @@ export default function AccountTab() {
           <Avatar
             name={editing ? nameDraft || user.name : user.name}
             color={editing ? colorDraft : user.avatarColor}
+            avatarUrl={user.avatarUrl}
             size={56}
           />
           <View style={styles.profileBody}>
@@ -185,6 +340,25 @@ export default function AccountTab() {
           {!editing ? (
             <Button title="Edit" variant="secondary" size="sm" onPress={startEditing} />
           ) : null}
+        </View>
+
+        {avatarError ? <Banner text={avatarError} tone="danger" /> : null}
+        <View style={styles.avatarActions}>
+          <Button
+            title={avatarUpload.isPending ? 'Uploading…' : user.avatarUrl ? 'Change photo' : 'Add photo'}
+            variant="secondary"
+            size="sm"
+            loading={avatarUpload.isPending}
+            disabled={avatarBusy}
+            onPress={openAvatarPicker}
+          />
+          <Button
+            title="Remove"
+            variant="ghost"
+            size="sm"
+            disabled={!user.avatarUrl || avatarBusy}
+            onPress={removeAvatar}
+          />
         </View>
 
         {editing ? (
@@ -215,7 +389,9 @@ export default function AccountTab() {
                       selected && { borderColor: colors.ink, borderWidth: 2 },
                     ]}
                   >
-                    {selected ? <Ionicons name="checkmark" size={16} color="#ffffff" /> : null}
+                    {selected ? (
+                      <Ionicons name="checkmark" size={16} color={colors.onBrand} />
+                    ) : null}
                   </Pressable>
                 );
               })}
@@ -247,6 +423,57 @@ export default function AccountTab() {
           value={user.defaultCurrency}
           onChange={changeCurrency}
         />
+
+        {/* Phone (WI-045) — its own edit flow, independent of every other control here. */}
+        <View style={[styles.prefRow, styles.prefRowSpaced]}>
+          <View style={[styles.prefIcon, { backgroundColor: colors.surface2 }]}>
+            <Ionicons name="call-outline" size={18} color={colors.ink2} />
+          </View>
+          <View style={styles.prefBody}>
+            <Text style={[styles.prefTitle, { color: colors.ink }]}>Phone number</Text>
+            <Text style={[styles.prefHint, { color: colors.ink3 }]}>
+              {user.phone ?? 'Not set — used to log in and be found by friends'}
+            </Text>
+          </View>
+          {!phoneEditing ? (
+            <Button
+              title={user.phone ? 'Edit' : 'Add'}
+              variant="secondary"
+              size="sm"
+              onPress={startPhoneEditing}
+            />
+          ) : null}
+        </View>
+        {phoneEditing ? (
+          <View style={styles.editBlock}>
+            {phoneError ? <Banner text={phoneError} tone="danger" /> : null}
+            <Input
+              label="Phone number"
+              placeholder="+1 415 555 2671"
+              value={phoneDraft}
+              onChangeText={setPhoneDraft}
+              keyboardType="phone-pad"
+              autoCapitalize="none"
+              autoComplete="tel"
+              autoCorrect={false}
+              containerStyle={styles.field}
+            />
+            <View style={styles.editActions}>
+              <Button
+                title="Cancel"
+                variant="ghost"
+                onPress={cancelPhoneEditing}
+                disabled={phoneMutation.isPending}
+              />
+              <Button
+                title="Save"
+                onPress={savePhone}
+                loading={phoneMutation.isPending}
+              />
+            </View>
+          </View>
+        ) : null}
+
         <View style={[styles.prefRow, styles.prefRowSpaced]}>
           <View style={styles.prefBody}>
             <Text style={[styles.prefTitle, { color: colors.ink }]}>Email notifications</Text>
@@ -259,7 +486,24 @@ export default function AccountTab() {
             onValueChange={toggleNotifications}
             disabled={notificationsMutation.isPending}
             trackColor={{ false: colors.surface2, true: colors.brand }}
-            thumbColor="#ffffff"
+            thumbColor={colors.onBrand}
+          />
+        </View>
+        <View style={[styles.prefRow, styles.prefRowSpaced]}>
+          <View style={styles.prefBody}>
+            <Text style={[styles.prefTitle, { color: colors.ink }]}>
+              Stale balance reminders
+            </Text>
+            <Text style={[styles.prefHint, { color: colors.ink3 }]}>
+              Get a reminder email when a balance has been outstanding for a while
+            </Text>
+          </View>
+          <Switch
+            value={user.staleBalanceRemindersEnabled}
+            onValueChange={toggleStaleBalanceReminders}
+            disabled={remindersMutation.isPending}
+            trackColor={{ false: colors.surface2, true: colors.brand }}
+            thumbColor={colors.onBrand}
           />
         </View>
         <View style={[styles.prefRow, styles.prefRowSpaced]}>
@@ -273,34 +517,6 @@ export default function AccountTab() {
             </Text>
           </View>
         </View>
-      </Card>
-
-      {/* Features */}
-      <SectionHeader title="MORE" />
-      <Card padded={false} style={styles.listCard}>
-        <ListItem
-          title="Recurring expenses"
-          subtitle="Rent, subscriptions and other repeating bills"
-          icon="repeat-outline"
-          chevron
-          onPress={() => router.push('/recurring')}
-        />
-        <View style={[styles.separator, { backgroundColor: colors.hairline }]} />
-        <ListItem
-          title="Analytics"
-          subtitle="Where your money goes"
-          icon="bar-chart-outline"
-          chevron
-          onPress={() => router.push('/analytics')}
-        />
-        <View style={[styles.separator, { backgroundColor: colors.hairline }]} />
-        <ListItem
-          title="Activity"
-          subtitle="Everything that happened across your groups"
-          icon="pulse-outline"
-          chevron
-          onPress={() => router.push('/activity')}
-        />
       </Card>
 
       {/* Security */}
@@ -374,14 +590,17 @@ export default function AccountTab() {
         ) : null}
       </Card>
 
-      <Button
-        title="Sign out"
-        variant="destructive"
-        icon="log-out-outline"
-        onPress={confirmSignOut}
-        fullWidth
-        style={styles.signOut}
-      />
+      {/* WI-068 §9.2 — danger zone separated by a hairline-strong divider,
+          matching the web settings page's "danger zone" treatment. */}
+      <View style={[styles.dangerZone, { borderTopColor: colors.hairlineStrong }]}>
+        <Button
+          title="Sign out"
+          variant="destructive"
+          icon="log-out-outline"
+          onPress={confirmSignOut}
+          fullWidth
+        />
+      </View>
     </Screen>
   );
 }
@@ -413,6 +632,12 @@ const styles = StyleSheet.create({
   profileEmail: {
     fontSize: fontSize.sm,
     marginTop: 1,
+  },
+  avatarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
   editBlock: {
     marginTop: spacing.lg,
@@ -455,6 +680,10 @@ const styles = StyleSheet.create({
   prefRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    // WI-068 §9.2/§12 — 44pt section rows (the "Change password" disclosure
+    // row is the interactive one this floor actually gates; additive to
+    // every other row here for consistency).
+    minHeight: 44,
   },
   prefRowSpaced: {
     marginTop: spacing.lg,
@@ -480,18 +709,12 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xs,
     marginTop: 1,
   },
-  listCard: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  separator: {
-    height: StyleSheet.hairlineWidth,
-    marginLeft: 56,
-  },
   passwordBlock: {
     marginTop: spacing.lg,
   },
-  signOut: {
+  dangerZone: {
     marginTop: spacing.xl,
+    paddingTop: spacing.xl,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
 });

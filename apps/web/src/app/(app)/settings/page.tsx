@@ -1,21 +1,49 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Check, LogOut, Monitor, Moon, Sun, type LucideIcon } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
-import { AVATAR_COLORS, LIMITS } from '@divzy/shared';
-import { useChangePassword, useLogout, useUpdateMe } from '@/lib/hooks';
+import {
+  AVATAR_COLORS,
+  LIMITS,
+  zPhone,
+  type NotificationCategory,
+  type NotificationPreferenceDto,
+} from '@divzy/shared';
+import {
+  useChangePassword,
+  useLogout,
+  useNotificationPreferences,
+  useUpdateMe,
+  useUpdateNotificationPreference,
+  useUploadAvatar,
+} from '@/lib/hooks';
 import { useAuth } from '@/lib/auth-store';
 import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CurrencySelect } from '@/components/ui/currency-select';
 import { Field, Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/ui/page-header';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Skeleton, SkeletonList } from '@/components/ui/skeleton';
+
+// ---------------------------------------------------------------------------
+// Avatar upload — client-side pre-validation (fast feedback; the server is
+// the authoritative enforcer of both constraints — defense in depth).
+// ---------------------------------------------------------------------------
+
+const AVATAR_ACCEPTED_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+];
+const AVATAR_MAX_BYTES = 10 * 1024 * 1024; // 10MB, mirrors MAX_UPLOAD_MB default.
 
 // ---------------------------------------------------------------------------
 // Small local switch (token-styled, accessible).
@@ -64,11 +92,28 @@ function Switch({
 function ProfileSection() {
   const { user } = useAuth();
   const updateMe = useUpdateMe();
+  // Own mutation instances for the avatar controls — deliberately NOT shared
+  // with `updateMe` above, so an in-flight profile-form save never disables
+  // the avatar controls and vice versa (DRB security condition, WI-035 §4 —
+  // "one mutation instance per independent control", same principle as the
+  // WI-022 stale-balance-reminders toggle).
+  const avatarUpload = useUploadAvatar();
+  const avatarUpdateMe = useUpdateMe();
+  // Own mutation instance for the phone field (WI-045) — independently
+  // submitted from both the name/avatarColor/currency form and the avatar
+  // controls, so a pending/failed phone save never disables either of those
+  // (same "one mutation instance per independent control" principle as the
+  // avatar controls above).
+  const phoneUpdateMe = useUpdateMe();
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState(user?.name ?? '');
   const [avatarColor, setAvatarColor] = useState(user?.avatarColor ?? AVATAR_COLORS[0]);
   const [defaultCurrency, setDefaultCurrency] = useState(user?.defaultCurrency ?? 'USD');
   const [nameTouched, setNameTouched] = useState(false);
+  const [phone, setPhone] = useState(user?.phone ?? '');
+  const [phoneTouched, setPhoneTouched] = useState(false);
 
   // Adopt server-side profile changes (e.g. saved from another tab).
   useEffect(() => {
@@ -76,6 +121,7 @@ function ProfileSection() {
     setName(user.name);
     setAvatarColor(user.avatarColor);
     setDefaultCurrency(user.defaultCurrency);
+    setPhone(user.phone ?? '');
   }, [user]);
 
   if (!user) return null;
@@ -102,6 +148,61 @@ function ProfileSection() {
     );
   };
 
+  const avatarPending = avatarUpload.isPending || avatarUpdateMe.isPending;
+
+  const handleAvatarFile = (file: File) => {
+    setAvatarError(null);
+    if (!AVATAR_ACCEPTED_TYPES.includes(file.type)) {
+      setAvatarError('Please choose a JPEG, PNG, WEBP, HEIC or HEIF image.');
+      return;
+    }
+    if (file.size > AVATAR_MAX_BYTES) {
+      setAvatarError('Image must be 10MB or smaller.');
+      return;
+    }
+    avatarUpload.mutate(file, {
+      onSuccess: (res) => {
+        avatarUpdateMe.mutate(
+          { avatarUrl: res.url },
+          { onSuccess: () => toast.success('Profile photo updated') },
+        );
+      },
+      onError: () => setAvatarError('Upload failed. Please try again.'),
+    });
+  };
+
+  const handleRemoveAvatar = () => {
+    setAvatarError(null);
+    avatarUpdateMe.mutate(
+      { avatarUrl: null },
+      { onSuccess: () => toast.success('Profile photo removed') },
+    );
+  };
+
+  // Phone (WI-045) — optional, independently-submitted. Empty clears it
+  // (sends `null`); a non-empty value must parse as a valid E.164-ish phone
+  // via the shared `zPhone` (never a hand-rolled regex). Errors (including
+  // 409 PHONE_TAKEN) surface through `useUpdateMe()`'s own default
+  // `onError: toastError` — this section adds no extra error handling.
+  const trimmedPhone = phone.trim();
+  const phoneParsed = trimmedPhone === '' ? null : zPhone.safeParse(trimmedPhone);
+  const phoneValid = trimmedPhone === '' || (phoneParsed?.success ?? false);
+  const phoneError = phoneTouched && !phoneValid ? 'Enter a valid phone number, e.g. +14155552671.' : null;
+  const phoneDirty = trimmedPhone !== (user.phone ?? '');
+
+  const handlePhoneSave = () => {
+    setPhoneTouched(true);
+    if (!phoneValid || !phoneDirty || phoneUpdateMe.isPending) return;
+    const nextPhone = phoneParsed && phoneParsed.success ? phoneParsed.data : null;
+    phoneUpdateMe.mutate(
+      { phone: nextPhone },
+      {
+        onSuccess: () =>
+          toast.success(nextPhone === null ? 'Phone number removed' : 'Phone number updated'),
+      },
+    );
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -110,7 +211,49 @@ function ProfileSection() {
       <CardContent>
         <form onSubmit={handleSubmit} noValidate className="space-y-4">
           <div className="flex items-center gap-4">
-            <Avatar user={{ name: trimmedName || user.name, avatarColor }} size="lg" />
+            <Avatar
+              user={{ name: trimmedName || user.name, avatarColor, avatarUrl: user.avatarUrl }}
+              size="lg"
+            />
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  loading={avatarPending}
+                  onClick={() => avatarInputRef.current?.click()}
+                >
+                  {user.avatarUrl ? 'Change photo' : 'Upload photo'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={!user.avatarUrl || avatarPending}
+                  onClick={handleRemoveAvatar}
+                >
+                  Remove
+                </Button>
+              </div>
+              {avatarError && (
+                <p role="alert" className="text-[13px] text-danger">
+                  {avatarError}
+                </p>
+              )}
+              <input
+                ref={avatarInputRef}
+                type="file"
+                className="hidden"
+                accept={AVATAR_ACCEPTED_TYPES.join(',')}
+                aria-label="Upload profile photo"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (file) handleAvatarFile(file);
+                }}
+              />
+            </div>
             <div
               role="radiogroup"
               aria-label="Avatar color"
@@ -175,6 +318,40 @@ function ProfileSection() {
             </Button>
           </div>
         </form>
+
+        <div className="mt-4 border-t border-hairline pt-4">
+          <Field
+            label="Phone"
+            error={phoneError}
+            hint={phoneError ? undefined : "Optional — lets you log in with your phone number too."}
+          >
+            {(id) => (
+              <div className="flex items-center gap-2">
+                <Input
+                  id={id}
+                  type="tel"
+                  placeholder="+14155552671"
+                  maxLength={LIMITS.PHONE_MAX}
+                  value={phone}
+                  invalid={phoneError !== null}
+                  disabled={phoneUpdateMe.isPending}
+                  onChange={(e) => setPhone(e.target.value)}
+                  onBlur={() => setPhoneTouched(true)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  loading={phoneUpdateMe.isPending}
+                  disabled={!phoneDirty || !phoneValid}
+                  onClick={handlePhoneSave}
+                >
+                  Save
+                </Button>
+              </div>
+            )}
+          </Field>
+        </div>
       </CardContent>
     </Card>
   );
@@ -187,6 +364,7 @@ function ProfileSection() {
 function NotificationsSection() {
   const { user } = useAuth();
   const updateMe = useUpdateMe();
+  const remindersMutation = useUpdateMe();
 
   if (!user) return null;
 
@@ -195,7 +373,7 @@ function NotificationsSection() {
       <CardHeader>
         <CardTitle>Notifications</CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm font-medium text-ink">Email notifications</p>
@@ -218,8 +396,123 @@ function NotificationsSection() {
             }
           />
         </div>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-ink">Stale balance reminders</p>
+            <p className="mt-0.5 text-[13px] text-ink-3">
+              Get a reminder email when a balance has been outstanding for a while.
+            </p>
+          </div>
+          <Switch
+            label="Stale balance reminders"
+            checked={user.staleBalanceRemindersEnabled}
+            disabled={remindersMutation.isPending}
+            onChange={(next) =>
+              remindersMutation.mutate(
+                { staleBalanceRemindersEnabled: next },
+                {
+                  onSuccess: () =>
+                    toast.success(
+                      next ? 'Stale balance reminders on' : 'Stale balance reminders off',
+                    ),
+                },
+              )
+            }
+          />
+        </div>
+
+        <NotificationCategoriesMatrix />
       </CardContent>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Notification categories matrix (WI-041, auth's slice)
+// ---------------------------------------------------------------------------
+
+const NOTIFICATION_CATEGORY_LABELS: Record<NotificationCategory, string> = {
+  EXPENSE_ADDED: 'Expense added',
+  EXPENSE_EDITED: 'Expense edited',
+  EXPENSE_DELETED: 'Expense deleted',
+  COMMENT: 'Comments',
+  PAYMENT_RECEIVED: 'Payment received',
+  GROUP_INVITE: 'Group invites',
+  EXPENSE_DUE: 'Expense due',
+  MONTHLY_SUMMARY: 'Monthly summary',
+  PRODUCT_NEWS: 'Product news',
+};
+
+function NotificationCategoriesMatrix() {
+  const prefsQuery = useNotificationPreferences();
+
+  return (
+    <div className="border-t border-hairline pt-4">
+      <p className="text-sm font-medium text-ink">Notification categories</p>
+      <p className="mt-0.5 text-[13px] text-ink-3">
+        Choose which events send you a push or email notification.
+      </p>
+
+      {prefsQuery.isLoading && <SkeletonList rows={3} avatar={false} className="mt-3" />}
+
+      {prefsQuery.isError && (
+        <p role="alert" className="mt-3 text-[13px] text-danger">
+          Couldn&apos;t load notification preferences. Please refresh and try again.
+        </p>
+      )}
+
+      {prefsQuery.data && (
+        <div className="mt-3">
+          <div className="grid grid-cols-[1fr,auto,auto] items-center gap-4 pb-2 text-[11px] font-medium uppercase tracking-wide text-ink-3">
+            <span>Category</span>
+            <span>Push</span>
+            <span>Email</span>
+          </div>
+          <div className="divide-y divide-hairline">
+            {prefsQuery.data.categories.map((pref) => (
+              <NotificationCategoryRow key={pref.category} pref={pref} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NotificationCategoryRow({ pref }: { pref: NotificationPreferenceDto }) {
+  // Own mutation instance per toggle (not per row) — a push toggle saving
+  // must never disable its row's email toggle, or any other row's toggles
+  // (DRB security condition, same "one mutation instance per control"
+  // principle as the WI-035 avatar controls).
+  const pushMutation = useUpdateNotificationPreference();
+  const emailMutation = useUpdateNotificationPreference();
+
+  const label = NOTIFICATION_CATEGORY_LABELS[pref.category];
+  const disabled = !pref.available;
+
+  return (
+    <div className="grid grid-cols-[1fr,auto,auto] items-center gap-4 py-2.5">
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-ink">{label}</span>
+        {disabled && <Badge>Coming soon</Badge>}
+      </div>
+      <Switch
+        label={`${label} push notifications`}
+        checked={pref.pushEnabled}
+        disabled={disabled || pushMutation.isPending}
+        onChange={(next) =>
+          !disabled && pushMutation.mutate({ category: pref.category, pushEnabled: next })
+        }
+      />
+      <Switch
+        label={`${label} email notifications`}
+        checked={pref.emailEnabled}
+        disabled={disabled || emailMutation.isPending}
+        onChange={(next) =>
+          !disabled && emailMutation.mutate({ category: pref.category, emailEnabled: next })
+        }
+      />
+    </div>
   );
 }
 
@@ -387,6 +680,10 @@ function AppearanceSection() {
 // Session
 // ---------------------------------------------------------------------------
 
+// WI-068 §9.1: the page's one destructive-adjacent action — separated with
+// the stronger `hairline-strong` border and a danger-styled (not neutral
+// outline) control, per the spec's "danger zone" punch-list item. The
+// sign-out action/copy itself (WI-034) is untouched.
 function SessionSection() {
   const logout = useLogout();
   const router = useRouter();
@@ -397,17 +694,16 @@ function SessionSection() {
   };
 
   return (
-    <Card>
+    <Card className="border-hairline-strong">
       <CardHeader>
         <CardTitle>Session</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-ink-2">
-            Sign out on this device. Your data stays right where it is.
-          </p>
+          <p className="text-sm text-ink-2">Sign out of this device.</p>
           <Button
-            variant="outline"
+            variant="ghost"
+            className="text-danger hover:bg-neg-soft hover:text-danger"
             loading={logout.isPending}
             onClick={() => void handleLogout()}
           >

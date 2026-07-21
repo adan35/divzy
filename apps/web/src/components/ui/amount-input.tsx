@@ -90,7 +90,7 @@ export function AmountInput({
   return (
     <div
       className={cn(
-        'flex h-10 items-center overflow-hidden rounded-[10px] border border-hairline bg-surface',
+        'flex h-10 items-center overflow-hidden rounded-[10px] border border-hairline-strong bg-surface',
         'transition-colors focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-soft',
         invalid && 'border-danger focus-within:border-danger focus-within:ring-neg-soft',
         disabled && 'cursor-not-allowed opacity-55',

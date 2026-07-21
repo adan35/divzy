@@ -12,7 +12,8 @@ import {
 } from 'recharts';
 import { format } from 'date-fns';
 import { formatMoney, toMajorUnits } from '@divzy/shared';
-import { useChartTheme } from './palette';
+import { MoneyText } from '@/components/ui/money-text';
+import { CHART_SERIES, useChartTheme } from './palette';
 
 export interface MonthlyTrendChartProps {
   /** Calendar months covering the range (zero-filled), amounts in minor units. */
@@ -49,7 +50,13 @@ interface TooltipPayloadEntry {
   value?: number | string;
 }
 
-function ChartTooltip({
+/**
+ * Exported (spec §8.2 tooltip chrome / AC-4a) so it can be rendered and
+ * asserted directly — Recharts renders zero-size under jsdom, so this plain,
+ * SVG-independent component is the only piece of the chart's chrome that is
+ * unit-testable in this environment (see monthly-trend-chart.test.tsx).
+ */
+export function ChartTooltip({
   active,
   payload,
   label,
@@ -63,10 +70,10 @@ function ChartTooltip({
   const value = payload?.[0]?.value;
   if (!active || typeof value !== 'number') return null;
   return (
-    <div className="rounded-xl border border-hairline bg-surface px-3 py-2 shadow-sm dark:shadow-none">
+    <div className="rounded-xl border border-hairline bg-elevated px-3 py-2 shadow-pop dark:shadow-top-edge">
       <p className="text-xs text-ink-3">{label}</p>
-      <p className="mt-0.5 text-sm font-medium tabular-nums text-ink">
-        {formatMoney(value, currency)}
+      <p className="mt-0.5 text-sm font-medium text-ink">
+        <MoneyText amount={value} currency={currency} />
       </p>
     </div>
   );
@@ -114,7 +121,7 @@ export function MonthlyTrendChart({ data, currency }: MonthlyTrendChartProps) {
             cursor={{ fill: 'var(--surface-2)', opacity: 0.5 }}
             content={<ChartTooltip currency={currency} />}
           />
-          <Bar dataKey="amount" fill="var(--brand)" radius={[4, 4, 0, 0]} maxBarSize={28} />
+          <Bar dataKey="amount" fill={CHART_SERIES} radius={[4, 4, 0, 0]} maxBarSize={28} />
         </BarChart>
       </ResponsiveContainer>
     </div>

@@ -69,7 +69,8 @@ const styles = StyleSheet.create({
   },
   segment: {
     flex: 1,
-    minHeight: 32,
+    // WI-068 §12: 38pt segment + 2×3pt track padding = a 44pt touch column.
+    minHeight: 38,
     borderRadius: radii.sm,
     alignItems: 'center',
     justifyContent: 'center',

@@ -38,6 +38,15 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-divzy}:${POSTGRES_PASSWORD:-divzy_dev_password}@postgres:5432/${POSTGRES_DB:-divzy}
       HOST: 0.0.0.0
+      # WI-077 — must win over whatever NODE_ENV is baked into the copied
+      # apps/api/.env (env_file below), which defaults to `development` per
+      # .env.example. Without this override, a container built from this
+      # compose file silently ran with dev-level debug logging AND
+      # NODE_ENV-gated security behavior (e.g. non-secure auth cookies) even
+      # though the Dockerfile's own `ENV NODE_ENV=production` says otherwise —
+      # env_file/environment set at container-start time wins over the
+      # image's baked-in ENV.
+      NODE_ENV: production
     ports:
       - "4000:4000"
     depends_on:

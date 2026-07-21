@@ -3,57 +3,96 @@
 @tailwind utilities;
 
 /* ---------------------------------------------------------------------------
-   Divzy design tokens (docs/STYLE.md). Every color in the app flows through
-   these variables; components use the mapped Tailwind utilities only.
+   Divzy design tokens (docs/STYLE.md, retuned by WI-068 "private-banking
+   slate"). Every color in the app flows through these variables; components
+   use the mapped Tailwind utilities only — never raw hex (story AC-2 scan).
+   Contrast for every text pairing is enforced by wi068-token-contrast.test.ts.
 --------------------------------------------------------------------------- */
 
 :root {
-  --page: #f9f9f7;
-  --surface: #fcfcfb;
-  --surface-2: #f0efec;
-  --hairline: rgba(11, 11, 11, 0.1);
-  --ink: #0b0b0b;
-  --ink-2: #52514e;
-  --ink-3: #898781;
-  --brand: #2a78d6;
-  --brand-hover: #256abf;
-  --pos: #006300;
-  --neg: #d03b3b;
-  --danger: #d03b3b;
-  --warn: #c98500;
+  --page: #f4f6f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f6;
+  --elevated: #ffffff;
+  --hairline: rgba(15, 23, 42, 0.1);
+  --hairline-strong: rgba(15, 23, 42, 0.16);
+  --ink: #0f172a;
+  --ink-2: #475569;
+  --ink-3: #5d6b7d;
+  --brand: #1d4ed8;
+  --brand-hover: #1e40af;
+  --brand-fill: #1d4ed8;
+  --brand-fill-hover: #1e40af;
+  --on-brand: #ffffff;
+  --pos: #047857;
+  --neg: #c02626;
+  --danger: #c02626;
+  --warn: #b45309;
+  --accent: #a16207;
 
   /* Soft tints (precomputed — var() colors can't take Tailwind alpha). */
-  --brand-soft: rgba(42, 120, 214, 0.1);
-  --pos-soft: rgba(0, 99, 0, 0.09);
-  --neg-soft: rgba(208, 59, 59, 0.09);
-  --warn-soft: rgba(201, 133, 0, 0.12);
-  --overlay: rgba(11, 11, 11, 0.4);
-  --page-veil: rgba(249, 249, 247, 0.85);
+  --brand-soft: rgba(29, 78, 216, 0.09);
+  --pos-soft: rgba(4, 120, 87, 0.08);
+  --neg-soft: rgba(192, 38, 38, 0.08);
+  --warn-soft: rgba(180, 83, 9, 0.1);
+  --accent-soft: rgba(161, 98, 7, 0.1);
+  --ring: #1d4ed8;
+  --overlay: rgba(15, 23, 42, 0.45);
+  --page-veil: rgba(244, 246, 249, 0.85);
+
+  /* Charts (spec §8) — series marks are decoupled from --brand. */
+  --chart-1: #2a78d6;
+  --chart-grid: #e6eaf1;
+
+  /* Elevation (light only — dark uses borders + top-edge highlight). */
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-2: 0 4px 16px rgba(15, 23, 42, 0.08);
+
+  /* Motion tiers (spec §4) — mode-independent. */
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-slow: 240ms;
+  --motion-count: 600ms;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 
   color-scheme: light;
 }
 
 .dark {
-  --page: #0d0d0d;
-  --surface: #1a1a19;
-  --surface-2: #242422;
-  --hairline: rgba(255, 255, 255, 0.1);
-  --ink: #ffffff;
-  --ink-2: #c3c2b7;
-  --ink-3: #898781;
-  --brand: #3987e5;
-  --brand-hover: #5598e7;
-  --pos: #0ca30c;
-  --neg: #e66767;
-  --danger: #e66767;
-  --warn: #eda100;
+  --page: #0a0e14;
+  --surface: #11161e;
+  --surface-2: #1a212b;
+  --elevated: #18202b;
+  --hairline: rgba(255, 255, 255, 0.09);
+  --hairline-strong: rgba(255, 255, 255, 0.16);
+  --ink: #f4f7fb;
+  --ink-2: #a9b4c4;
+  --ink-3: #7e8a9c;
+  --brand: #60a5fa;
+  --brand-hover: #93c5fd;
+  --brand-fill: #2563eb;
+  --brand-fill-hover: #1d4ed8;
+  --on-brand: #ffffff;
+  --pos: #34d399;
+  --neg: #f87171;
+  --danger: #f87171;
+  --warn: #fbbf24;
+  --accent: #e3b341;
 
-  --brand-soft: rgba(57, 135, 229, 0.16);
-  --pos-soft: rgba(12, 163, 12, 0.14);
-  --neg-soft: rgba(230, 103, 103, 0.14);
-  --warn-soft: rgba(237, 161, 0, 0.16);
+  --brand-soft: rgba(96, 165, 250, 0.14);
+  --pos-soft: rgba(52, 211, 153, 0.12);
+  --neg-soft: rgba(248, 113, 113, 0.12);
+  --warn-soft: rgba(251, 191, 36, 0.12);
+  --accent-soft: rgba(227, 179, 65, 0.12);
+  --ring: #60a5fa;
   --overlay: rgba(0, 0, 0, 0.6);
-  --page-veil: rgba(13, 13, 13, 0.85);
+  --page-veil: rgba(10, 14, 20, 0.85);
+
+  --chart-1: #3987e5;
+  --chart-grid: #232b36;
+
+  --shadow-1: none;
+  --shadow-2: none;
 
   color-scheme: dark;
 }
@@ -75,13 +114,13 @@
   }
 
   ::selection {
-    background-color: var(--brand);
-    color: #ffffff;
+    background-color: var(--brand-fill);
+    color: var(--on-brand);
   }
 
-  /* Sensible default focus ring on keyboard navigation. */
+  /* Keyboard focus ring — always the ring token, never removed (spec §12). */
   :focus-visible {
-    outline: 2px solid var(--brand);
+    outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
 
@@ -103,7 +142,7 @@
   }
 }
 
-/* Dialog / dropdown entrance animations. */
+/* Dialog / dropdown entrance animations (spec §4 fast/base tiers). */
 @keyframes divzy-fade-in {
   from {
     opacity: 0;
@@ -125,9 +164,37 @@
 }
 
 .animate-fade-in {
-  animation: divzy-fade-in 140ms ease-out;
+  animation: divzy-fade-in var(--motion-fast) ease-out;
 }
 
 .animate-pop-in {
-  animation: divzy-pop-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: divzy-pop-in var(--motion-base) var(--ease-out-expo);
+}
+
+/* Settle celebration particle (lib/celebrate.tsx, spec §7): radial burst to
+   an apex, then a gravity fall with fade. Per-particle vectors arrive as
+   inline custom properties. */
+@keyframes divzy-celebrate {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+    opacity: 1;
+  }
+  55% {
+    transform: translate3d(var(--celebrate-mx), var(--celebrate-my), 0)
+      rotate(var(--celebrate-mr)) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--celebrate-x), var(--celebrate-y), 0)
+      rotate(var(--celebrate-r)) scale(0.85);
+    opacity: 0;
+  }
+}
+
+/* Decorative pop-ins degrade to a simple fade under reduced motion (story
+   AC-8; count-up/celebration are gated in JS via lib/motion.ts). */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pop-in {
+    animation: divzy-fade-in var(--motion-fast) ease-out;
+  }
 }

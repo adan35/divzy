@@ -1,4 +1,5 @@
-import { getCurrency, toMajorUnits } from '@divzy/shared';
+import { computeNets, type LedgerExpense, type LedgerSettlement } from '@divzy/shared';
+import { decimalString } from './money-format';
 
 // ---------------------------------------------------------------------------
 // Group CSV export (docs/CONTRACTS.md §Groups → export.csv).
@@ -8,10 +9,22 @@ import { getCurrency, toMajorUnits } from '@divzy/shared';
 // row (paid − owed). Expenses come first in chronological order, followed by
 // settlement rows (`Settlement: <from> → <to>`; payer +amount, recipient
 // −amount — the same sign convention as the balance engine's computeNets).
+//
+// Additive balance-summary section (WI-030 / ADR-021, shared semantics with
+// the WI-029 PDF export): appended after all expense/settlement rows, never
+// altering them. Nets are computed once via `computeNets` over the same
+// loaded expenses/settlements (never a second balance computation). "Total
+// outstanding" per currency = sum of every positive per-member net in that
+// currency (a naive signed sum is always 0 by the zero-sum invariant). The
+// owed-vs-owes signal is a real *textual* signal (CSV cannot carry color):
+// an explicit sign (+/-, 0 = "settled up") AND a direction label ("owed to
+// them" / "they owe" / "settled up") — never a bare sign alone.
 // ---------------------------------------------------------------------------
 
 export interface CsvGroup {
   name: string;
+  /** Group emoji, for the PDF export's branded header (WI-029). Never used by CSV. */
+  emoji?: string;
 }
 
 export interface CsvMember {
@@ -45,12 +58,6 @@ export interface CsvSettlementRow {
 /** RFC 4180 escaping: quote fields containing commas/quotes/newlines, double quotes. */
 function escapeField(value: string): string {
   return /[",\r\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
-}
-
-/** Minor units → fixed decimal string with the currency's decimals ("12.50", "1200"). */
-function decimalString(minor: number, currency: string): string {
-  const { decimals } = getCurrency(currency);
-  return toMajorUnits(minor, currency).toFixed(decimals);
 }
 
 /** Calendar date part of an ISO timestamp (exports don't need times). */
@@ -125,5 +132,68 @@ export function buildGroupCsv(
     lines.push(cells.map(escapeField).join(','));
   }
 
+  appendBalanceSummary(lines, members, expenses, settlements);
+
   return `${lines.join('\r\n')}\r\n`;
+}
+
+/**
+ * Signed, currency-decimal-formatted net: leading `+` for positive, the
+ * `-` `decimalString` already emits for negative, no sign for exactly zero
+ * (paired with the "settled up" label so zero is never ambiguous/blank).
+ */
+function signedDecimalString(minor: number, currency: string): string {
+  const formatted = decimalString(minor, currency);
+  return minor > 0 ? `+${formatted}` : formatted;
+}
+
+/** ADR-021 direction label: pairs with the sign, never a bare +/- alone. */
+function directionLabel(minor: number): string {
+  if (minor > 0) return 'owed to them';
+  if (minor < 0) return 'they owe';
+  return 'settled up';
+}
+
+/**
+ * Appends the WI-030 balance-summary section (ADR-021, shared semantics with
+ * the WI-029 PDF export): a blank-line separator, a `Balance summary` header,
+ * one row per member per currency they have a net in (narrow `Member,
+ * Currency, Net, Direction` shape, distinct from the wide expense/settlement
+ * rows above), then one `Total outstanding` row per currency. Nets come from
+ * `computeNets` over the same already-loaded/filtered data — never a second
+ * balance computation. Currencies are sorted for deterministic output and
+ * never combined/converted (ARCH invariant 5 is not touched: the WI-001
+ * converted display figure is never read here).
+ */
+function appendBalanceSummary(
+  lines: string[],
+  members: CsvMember[],
+  expenses: readonly LedgerExpense[],
+  settlements: readonly LedgerSettlement[],
+): void {
+  const nets = computeNets(expenses, settlements);
+  const currencies = [...nets.keys()].sort((a, b) => a.localeCompare(b));
+
+  lines.push('');
+  lines.push(escapeField('Balance summary'));
+  lines.push(['Member', 'Currency', 'Net', 'Direction'].map(escapeField).join(','));
+
+  for (const currency of currencies) {
+    const perUser = nets.get(currency)!;
+    for (const member of members) {
+      if (!perUser.has(member.id)) continue;
+      const net = perUser.get(member.id)!;
+      const cells = [member.name, currency, signedDecimalString(net, currency), directionLabel(net)];
+      lines.push(cells.map(escapeField).join(','));
+    }
+  }
+
+  for (const currency of currencies) {
+    const perUser = nets.get(currency)!;
+    const totalOutstanding = [...perUser.values()]
+      .filter((amount) => amount > 0)
+      .reduce((sum, amount) => sum + amount, 0);
+    const cells = ['Total outstanding', currency, decimalString(totalOutstanding, currency)];
+    lines.push(cells.map(escapeField).join(','));
+  }
 }

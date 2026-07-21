@@ -63,7 +63,12 @@ export function PayerSelector({
         </View>
         {members.map((member) => (
           <View key={member.id} style={styles.multiRow}>
-            <Avatar name={member.name} color={member.avatarColor} size={28} />
+            <Avatar
+              name={member.name}
+              color={member.avatarColor}
+              avatarUrl={member.avatarUrl}
+              size={28}
+            />
             <Text numberOfLines={1} style={[styles.multiName, { color: colors.ink }]}>
               {member.id === meId ? 'You' : member.name}
             </Text>
@@ -136,7 +141,12 @@ export function PayerSelector({
         ]}
       >
         {selected ? (
-          <Avatar name={selected.name} color={selected.avatarColor} size={24} />
+          <Avatar
+            name={selected.name}
+            color={selected.avatarColor}
+            avatarUrl={selected.avatarUrl}
+            size={24}
+          />
         ) : (
           <Ionicons name="person-circle-outline" size={24} color={colors.ink3} />
         )}
@@ -189,7 +199,12 @@ export function PayerSelector({
                     pressed && { backgroundColor: colors.surface2 },
                   ]}
                 >
-                  <Avatar name={item.name} color={item.avatarColor} size={36} />
+                  <Avatar
+                    name={item.name}
+                    color={item.avatarColor}
+                    avatarUrl={item.avatarUrl}
+                    size={36}
+                  />
                   <Text numberOfLines={1} style={[styles.rowName, { color: colors.ink }]}>
                     {item.name}
                     {item.id === meId ? <Text style={{ color: colors.ink3 }}> (you)</Text> : null}

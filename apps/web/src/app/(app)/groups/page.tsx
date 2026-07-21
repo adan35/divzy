@@ -2,16 +2,16 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { ChevronRight, Plus, RefreshCw, Users } from 'lucide-react';
 import {
   GROUP_TYPES,
-  formatMoney,
-  type CurrencyAmount,
+  matchesBalanceFilter,
+  type BalanceFilter,
   type GroupSummaryDto,
   type GroupType,
 } from '@divzy/shared';
-import { errorMessage, useGroups } from '@/lib/hooks';
+import { errorMessage, useGroups, useUnarchiveGroup } from '@/lib/hooks';
 import { formatRelative } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -19,39 +19,58 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PageHeader } from '@/components/ui/page-header';
+import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Toggle } from '@/components/ui/toggle';
+import { BalanceSentences } from '@/components/groups/balance-sentences';
 import { GroupFormDialog } from '@/components/groups/group-form-dialog';
+import { GroupSpendChart } from '@/components/groups/group-spend-chart';
+
+// WI-028: per-device toggle persistence (localStorage) — no server state, no
+// auth-owned User field. Default off — nothing hides settled groups without
+// explicit user action.
+const UNSETTLED_ONLY_KEY = 'divzy.groups.unsettledOnly';
+
+function readUnsettledOnly(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(UNSETTLED_ONLY_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeUnsettledOnly(value: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(UNSETTLED_ONLY_KEY, value ? '1' : '0');
+  } catch {
+    // Storage unavailable (private mode etc.) — the toggle still works for
+    // the current session via React state, it just won't persist.
+  }
+}
+
+const GROUP_FILTER_LABELS: Record<BalanceFilter, string> = {
+  none: 'All groups',
+  outstanding: 'Any outstanding balance',
+  youOwe: 'You owe',
+  owedYou: 'You are owed',
+};
 
 function typeLabel(type: GroupType): string {
   return GROUP_TYPES.find((t) => t.key === type)?.label ?? 'Other';
 }
 
-/** Your net position, phrased per STYLE.md — color always paired with wording. */
-function BalanceSentences({ balances }: { balances: CurrencyAmount[] }) {
-  if (balances.length === 0) {
-    return <p className="text-sm text-ink-3">You&rsquo;re all settled up</p>;
-  }
-  return (
-    <div className="space-y-0.5">
-      {balances.map((b) => (
-        <p
-          key={b.currency}
-          className={cn(
-            'text-sm font-medium tabular-nums',
-            b.amount > 0 ? 'text-pos' : 'text-neg',
-          )}
-        >
-          {b.amount > 0
-            ? `You are owed ${formatMoney(b.amount, b.currency)}`
-            : `You owe ${formatMoney(-b.amount, b.currency)}`}
-        </p>
-      ))}
-    </div>
-  );
-}
-
 function GroupCard({ group }: { group: GroupSummaryDto }) {
   const archived = group.archivedAt !== null;
+  const unarchiveGroup = useUnarchiveGroup();
+
+  const handleUnarchive = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    unarchiveGroup.mutate(group.id);
+  };
+
   return (
     <Link
       href={`/groups/${group.id}`}
@@ -72,7 +91,9 @@ function GroupCard({ group }: { group: GroupSummaryDto }) {
             {group.emoji}
           </span>
           <span className="flex items-center gap-1.5">
-            {archived && <Badge variant="warn">Archived</Badge>}
+            {/* WI-028: group-wide settled categorization — independent of archived. */}
+            {group.settled && <Badge variant="pos">Settled</Badge>}
+            {archived && <Badge className="text-ink-3">Archived</Badge>}
             <Badge variant="outline">{typeLabel(group.type)}</Badge>
           </span>
         </div>
@@ -84,12 +105,34 @@ function GroupCard({ group }: { group: GroupSummaryDto }) {
           </p>
         </div>
         <div className="mt-auto space-y-1.5 border-t border-hairline pt-3">
-          <BalanceSentences balances={group.yourBalances} />
+          <BalanceSentences
+            yourBalanceConverted={group.yourBalanceConverted}
+            yourBalances={group.yourBalances}
+            usedFallbackRates={group.usedFallbackRates}
+          />
           <p className="text-xs text-ink-3">
             {group.lastActivityAt
               ? `Active ${formatRelative(group.lastActivityAt)}`
               : 'No activity yet'}
           </p>
+          {/*
+            WI-027: any active member may attempt unarchive here — the server
+            (assertAdmin) is the authoritative gate. GroupSummaryDto carries no
+            viewer-role field to hide this client-side for non-admins on the
+            list view (unlike the group detail page, which has full GroupDto
+            members to compute isAdmin) — see build note.
+          */}
+          {archived && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              loading={unarchiveGroup.isPending}
+              onClick={handleUnarchive}
+            >
+              Unarchive
+            </Button>
+          )}
         </div>
       </Card>
     </Link>
@@ -133,6 +176,12 @@ function GroupsPageInner() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  // WI-028: default off (localStorage-persisted). Lazy initializer reads once
+  // on mount — SSR-safe (readUnsettledOnly() returns false server-side).
+  const [unsettledOnly, setUnsettledOnly] = useState(readUnsettledOnly);
+  // WI-038: viewer-net balance filter — independent axis from both the
+  // archived split and the WI-028 settled toggle above.
+  const [balanceFilter, setBalanceFilter] = useState<BalanceFilter>('none');
   const autoOpened = useRef(false);
 
   // ?new=1 auto-opens the create dialog once, then cleans the URL.
@@ -144,13 +193,27 @@ function GroupsPageInner() {
     }
   }, [searchParams, router]);
 
+  const handleUnsettledOnlyChange = (checked: boolean) => {
+    setUnsettledOnly(checked);
+    writeUnsettledOnly(checked);
+  };
+
   const { active, archived } = useMemo(() => {
     const all = groups.data ?? [];
+    const byBalanceFilter = (g: GroupSummaryDto) =>
+      matchesBalanceFilter(g.yourBalancesNative ?? [], balanceFilter);
     return {
-      active: all.filter((g) => g.archivedAt === null).sort(byActivity),
-      archived: all.filter((g) => g.archivedAt !== null).sort(byActivity),
+      // WI-028: unsettled-only hides settled groups from the active section
+      // only — the archived section keeps its existing (unfiltered-by-settled)
+      // rules per spec-WI-028's "independent states" AC.
+      active: all
+        .filter((g) => g.archivedAt === null)
+        .filter((g) => !unsettledOnly || !g.settled)
+        .filter(byBalanceFilter)
+        .sort(byActivity),
+      archived: all.filter((g) => g.archivedAt !== null).filter(byBalanceFilter).sort(byActivity),
     };
-  }, [groups.data]);
+  }, [groups.data, unsettledOnly, balanceFilter]);
 
   return (
     <>
@@ -169,6 +232,31 @@ function GroupsPageInner() {
         }
       />
 
+      {groups.data && groups.data.length > 0 && (
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <label className="flex items-center gap-2 text-[13px] font-medium text-ink-2">
+            <Toggle
+              checked={unsettledOnly}
+              onChange={handleUnsettledOnlyChange}
+              aria-label="Unsettled only"
+            />
+            Unsettled only
+          </label>
+          <Select
+            aria-label="Filter groups"
+            value={balanceFilter}
+            onChange={(e) => setBalanceFilter(e.target.value as BalanceFilter)}
+            className="w-56"
+          >
+            {(Object.keys(GROUP_FILTER_LABELS) as BalanceFilter[]).map((f) => (
+              <option key={f} value={f}>
+                {GROUP_FILTER_LABELS[f]}
+              </option>
+            ))}
+          </Select>
+        </div>
+      )}
+
       {groups.isLoading ? (
         <GroupsSkeleton />
       ) : groups.isError ? (
@@ -179,7 +267,7 @@ function GroupsPageInner() {
             Try again
           </Button>
         </Card>
-      ) : active.length === 0 && archived.length === 0 ? (
+      ) : (groups.data?.length ?? 0) === 0 ? (
         <EmptyState
           emoji="✈️"
           title="No groups yet"
@@ -188,6 +276,23 @@ function GroupsPageInner() {
             <Button onClick={() => setFormOpen(true)}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               New group
+            </Button>
+          }
+        />
+      ) : active.length === 0 && archived.length === 0 ? (
+        <EmptyState
+          emoji="🔍"
+          title="No groups match your filters"
+          hint="Try a different balance filter, or turn off “Unsettled only.”"
+          action={
+            <Button
+              variant="secondary"
+              onClick={() => {
+                handleUnsettledOnlyChange(false);
+                setBalanceFilter('none');
+              }}
+            >
+              Clear filters
             </Button>
           }
         />
@@ -238,6 +343,8 @@ function GroupsPageInner() {
           )}
         </div>
       )}
+
+      <GroupSpendChart className="mt-8" />
 
       <GroupFormDialog open={formOpen} onOpenChange={setFormOpen} />
     </>

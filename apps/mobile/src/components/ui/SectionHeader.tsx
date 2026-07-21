@@ -12,9 +12,9 @@ export function SectionHeader({ title, actionLabel, onAction, style }: SectionHe
   const { colors } = useTheme();
   return (
     <View style={[styles.row, style]}>
-      <Text style={[styles.title, { color: colors.ink2 }]}>{title}</Text>
+      <Text style={[styles.title, { color: colors.ink3 }]}>{title}</Text>
       {actionLabel && onAction ? (
-        <Pressable accessibilityRole="button" onPress={onAction} hitSlop={8}>
+        <Pressable accessibilityRole="button" onPress={onAction} hitSlop={12}>
           {({ pressed }) => (
             <Text style={[styles.action, { color: pressed ? colors.brandHover : colors.brand }]}>
               {actionLabel}
@@ -34,10 +34,12 @@ const styles = StyleSheet.create({
     paddingTop: spacing.xl,
     paddingBottom: spacing.sm,
   },
+  // WI-068 §2 section-label scale: 12/600, uppercase, +0.06em tracking, ink3.
   title: {
-    fontSize: fontSize.sm,
+    fontSize: fontSize.xs,
     fontWeight: '600',
-    letterSpacing: 0.2,
+    textTransform: 'uppercase',
+    letterSpacing: fontSize.xs * 0.06,
   },
   action: {
     fontSize: fontSize.sm,

@@ -45,23 +45,34 @@ export function Dropdown({
   const rootRef = useRef<HTMLDivElement>(null);
   const onOpenChangeRef = useRef(onOpenChange);
   onOpenChangeRef.current = onOpenChange;
+  // Tracks the previously-committed `open` value so the effect below only notifies on a
+  // real open/close transition (reproducing the old `prev !== next` guard), never on mount
+  // (initialized to the same value as the initial `open` state). Comparing against a ref
+  // — rather than a "did this effect run before" flag reset in a cleanup — is robust to
+  // React StrictMode's dev-only mount -> cleanup -> re-mount effect double-invocation: a
+  // cleanup-driven flag would get reset by the *real* cleanup that also runs before every
+  // later dependency-change re-run, causing false skips on genuine transitions.
+  const prevOpenRef = useRef(open);
 
-  const setOpenNotify = (next: boolean) => {
-    setOpen((prev) => {
-      if (prev !== next) onOpenChangeRef.current?.(next);
-      return next;
-    });
-  };
+  // Notify the consumer from a commit-phase effect (never from inside the setOpen
+  // functional updater) so this never fires while React is mid-render of a different
+  // component.
+  useEffect(() => {
+    if (prevOpenRef.current !== open) {
+      onOpenChangeRef.current?.(open);
+    }
+    prevOpenRef.current = open;
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: PointerEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpenNotify(false);
+        setOpen(false);
       }
     };
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape') setOpenNotify(false);
+      if (e.key === 'Escape') setOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
@@ -69,13 +80,12 @@ export function Dropdown({
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const onTriggerKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      if (!disabled) setOpenNotify(!open);
+      if (!disabled) setOpen(!open);
     }
   };
 
@@ -87,7 +97,7 @@ export function Dropdown({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => {
-          if (!disabled) setOpenNotify(!open);
+          if (!disabled) setOpen(!open);
         }}
         onKeyDown={onTriggerKeyDown}
         className={cn('cursor-pointer', disabled && 'cursor-not-allowed opacity-55')}
@@ -98,13 +108,13 @@ export function Dropdown({
         <div
           role="menu"
           className={cn(
-            'animate-pop-in absolute z-50 min-w-[180px] overflow-hidden rounded-xl border border-hairline bg-surface py-1 shadow-lg dark:shadow-none',
+            'animate-pop-in absolute z-50 min-w-[180px] overflow-hidden rounded-xl border border-hairline bg-elevated py-1 shadow-pop dark:shadow-top-edge',
             side === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5',
             align === 'end' ? 'right-0' : 'left-0',
             contentClassName,
           )}
         >
-          <DropdownContext.Provider value={{ close: () => setOpenNotify(false) }}>
+          <DropdownContext.Provider value={{ close: () => setOpen(false) }}>
             {children}
           </DropdownContext.Provider>
         </div>

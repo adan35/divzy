@@ -18,7 +18,6 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import {
-  formatMoney,
   LIMITS,
   RECURRENCE_FREQUENCIES,
   type CreateRecurringInput,
@@ -28,12 +27,14 @@ import {
 } from '@divzy/shared';
 import {
   AmountInput,
+  Badge,
   Button,
   Card,
   CurrencyPicker,
   EmptyState,
   ErrorState,
   Input,
+  MoneyText,
   Skeleton,
   SkeletonList,
 } from '@/components/ui';
@@ -188,14 +189,21 @@ export default function RecurringScreen() {
                 <Text numberOfLines={1} style={[styles.cardTitle, { color: colors.ink }]}>
                   {item.description}
                 </Text>
-                <Text style={[styles.cardAmount, { color: colors.ink }]}>
-                  {formatMoney(item.amount, item.currency)}
-                </Text>
+                <MoneyText
+                  amount={item.amount}
+                  currency={item.currency}
+                  colored={false}
+                  size={fontSize.lg}
+                  weight="700"
+                />
               </View>
-              <Text numberOfLines={1} style={[styles.cardMeta, { color: colors.ink3 }]}>
-                {item.group ? `${item.group.emoji} ${item.group.name}` : 'Outside a group'} ·{' '}
-                {frequencyLabel(item.frequency)}
-              </Text>
+              <View style={styles.cardMetaRow}>
+                <Text numberOfLines={1} style={[styles.cardMeta, styles.cardMetaGroup, { color: colors.ink3 }]}>
+                  {item.group ? `${item.group.emoji} ${item.group.name}` : 'Outside a group'}
+                </Text>
+                {/* WI-068 §9.2 — frequency badge, brand-soft. */}
+                <Badge label={frequencyLabel(item.frequency)} tone="brand" />
+              </View>
               <Text style={[styles.cardMeta, { color: item.active ? colors.ink2 : colors.ink3 }]}>
                 {item.active
                   ? `Next posts ${formatDate(item.nextRunAt)}${item.endDate ? ` · until ${formatDate(item.endDate)}` : ''}`
@@ -563,10 +571,14 @@ const styles = StyleSheet.create({
     fontSize: fontSize.lg,
     fontWeight: '600',
   },
-  cardAmount: {
-    fontSize: fontSize.lg,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
+  cardMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  cardMetaGroup: {
+    flex: 1,
+    minWidth: 0,
   },
   cardMeta: {
     fontSize: fontSize.sm,

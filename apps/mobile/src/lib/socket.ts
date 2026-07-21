@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { ClientToServerEvents, ServerToClientEvents } from '@divzy/shared';
 import { API_BASE_URL, getAccessToken, onAuthEvent } from './api';
 import { useAuth } from './auth';
-import { invalidateForExpenseChange, queryKeys } from './hooks';
+import { invalidateForGroupChangedEvent, queryKeys } from './hooks';
 
 const WS_URL = process.env.EXPO_PUBLIC_WS_URL ?? API_BASE_URL;
 
@@ -84,8 +84,8 @@ export function useRealtimeSync(): void {
       }
     });
 
-    next.on('group:changed', ({ groupId }) => {
-      invalidateForExpenseChange(queryClient, groupId);
+    next.on('group:changed', (payload) => {
+      invalidateForGroupChangedEvent(queryClient, payload);
     });
 
     next.on('friends:changed', () => {

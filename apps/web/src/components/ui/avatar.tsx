@@ -1,11 +1,20 @@
 'use client';
 
+import { useState } from 'react';
+import { apiUrl } from '@/lib/api';
 import { initials } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 export interface AvatarUser {
   name: string;
   avatarColor: string;
+  /**
+   * WI-035. Relative `/uploads/avatars/<hex>.<ext>` path, or null/undefined
+   * for no photo (initials rendering). Resolved to an absolute URL via
+   * `apiUrl()`. A failed image load (`onError`) falls back to initials —
+   * never a broken-image icon.
+   */
+  avatarUrl?: string | null;
 }
 
 export type AvatarSize = 'xs' | 'sm' | 'md' | 'lg';
@@ -23,19 +32,36 @@ const SIZES: Record<AvatarSize, string> = {
   lg: 'h-12 w-12 text-base',
 };
 
-/** Colored circle + white initials (color comes from `user.avatarColor`). */
+/**
+ * Colored circle + white initials (color comes from `user.avatarColor`), or
+ * the user's uploaded photo when `avatarUrl` is set. An image load failure
+ * falls back to the initials rendering rather than a broken-image icon.
+ */
 export function Avatar({ user, size = 'md', className }: AvatarProps) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const showImage = !!user.avatarUrl && !imgFailed;
+
   return (
     <span
       title={user.name}
       className={cn(
-        'inline-flex shrink-0 select-none items-center justify-center rounded-full font-semibold text-white',
+        'inline-flex shrink-0 select-none items-center justify-center overflow-hidden rounded-full font-semibold text-white',
         SIZES[size],
         className,
       )}
-      style={{ backgroundColor: user.avatarColor }}
+      style={showImage ? undefined : { backgroundColor: user.avatarColor }}
     >
-      {initials(user.name)}
+      {showImage ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={apiUrl(user.avatarUrl!)}
+          alt={user.name}
+          className="h-full w-full object-cover"
+          onError={() => setImgFailed(true)}
+        />
+      ) : (
+        initials(user.name)
+      )}
     </span>
   );
 }

@@ -46,11 +46,14 @@ export function Button({
   const { colors } = useTheme();
   const dims = SIZES[size];
 
+  // WI-068 §1.1: button fills consume brandFill (not brand) so onBrand text
+  // clears 4.5:1 in dark mode; primary presses tint via brandFillPressed
+  // instead of an opacity dip. Other variants keep the opacity press.
   const palette = {
-    primary: { bg: colors.brand, fg: colors.onBrand },
-    secondary: { bg: colors.surface2, fg: colors.ink },
-    ghost: { bg: 'transparent', fg: colors.brand },
-    destructive: { bg: colors.danger, fg: colors.onBrand },
+    primary: { bg: colors.brandFill, pressedBg: colors.brandFillPressed, fg: colors.onBrand },
+    secondary: { bg: colors.surface2, pressedBg: colors.surface2, fg: colors.ink },
+    ghost: { bg: 'transparent', pressedBg: 'transparent', fg: colors.brand },
+    destructive: { bg: colors.danger, pressedBg: colors.danger, fg: colors.onBrand },
   }[variant];
 
   const isDisabled = disabled || loading;
@@ -67,13 +70,16 @@ export function Button({
       accessibilityState={{ disabled: isDisabled, busy: loading }}
       disabled={isDisabled}
       onPress={handlePress}
+      // 44pt target floor (spec §12): sm buttons are 34pt tall — pad the
+      // touchable area out to >= 44pt without shifting layout.
+      hitSlop={size === 'sm' ? 6 : undefined}
       style={({ pressed }) => [
         styles.base,
         {
           height: dims.height,
           paddingHorizontal: dims.padH,
-          backgroundColor: palette.bg,
-          opacity: isDisabled ? 0.55 : pressed ? 0.75 : 1,
+          backgroundColor: pressed && variant === 'primary' ? palette.pressedBg : palette.bg,
+          opacity: isDisabled ? 0.55 : pressed && variant !== 'primary' ? 0.75 : 1,
         },
         fullWidth && styles.fullWidth,
         style,

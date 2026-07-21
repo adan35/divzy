@@ -4,8 +4,17 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 export interface EmptyStateProps {
-  /** Context emoji per STYLE.md: 🧾 expenses, 👥 friends, ✈️ groups ... */
-  emoji: string;
+  /**
+   * Preferred glyph (WI-068): a lucide icon node, rendered in a brand-soft
+   * circle. Takes precedence over `emoji` when both are given.
+   */
+  icon?: ReactNode;
+  /**
+   * Back-compat context emoji per STYLE.md: 🧾 expenses, 👥 friends,
+   * ✈️ groups... Kept for existing call sites; screen slices migrate to
+   * `icon` opportunistically.
+   */
+  emoji?: string;
   title: string;
   hint?: string;
   /** Primary action button. */
@@ -13,7 +22,7 @@ export interface EmptyStateProps {
   className?: string;
 }
 
-export function EmptyState({ emoji, title, hint, action, className }: EmptyStateProps) {
+export function EmptyState({ icon, emoji, title, hint, action, className }: EmptyStateProps) {
   return (
     <div
       className={cn(
@@ -21,9 +30,21 @@ export function EmptyState({ emoji, title, hint, action, className }: EmptyState
         className,
       )}
     >
-      <div className="text-4xl" aria-hidden="true">
-        {emoji}
-      </div>
+      {icon ? (
+        <div
+          aria-hidden="true"
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-soft text-brand [&>svg]:h-6 [&>svg]:w-6"
+        >
+          {icon}
+        </div>
+      ) : emoji ? (
+        <div
+          aria-hidden="true"
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-surface-2 text-3xl"
+        >
+          {emoji}
+        </div>
+      ) : null}
       <h3 className="mt-2 text-[15px] font-semibold text-ink">{title}</h3>
       {hint && <p className="max-w-sm text-sm text-ink-3">{hint}</p>}
       {action && <div className="mt-4">{action}</div>}

@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { fontSize, spacing, useTheme } from '@/theme';
+import { fontSize, radii, spacing, useTheme } from '@/theme';
 import { Button } from './Button';
 
 export interface ErrorStateProps {
@@ -18,7 +18,9 @@ export function ErrorState({
   const { colors } = useTheme();
   return (
     <View style={[styles.root, style]}>
-      <Ionicons name="cloud-offline-outline" size={34} color={colors.ink3} />
+      <View style={[styles.bubble, { backgroundColor: colors.surface2 }]}>
+        <Ionicons name="cloud-offline-outline" size={30} color={colors.ink2} />
+      </View>
       <Text style={[styles.title, { color: colors.ink }]}>Something went wrong</Text>
       <Text style={[styles.message, { color: colors.ink3 }]}>{message}</Text>
       {onRetry ? (
@@ -34,6 +36,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: spacing.xxl + spacing.lg,
     paddingHorizontal: spacing.xl,
+  },
+  bubble: {
+    width: 72,
+    height: 72,
+    borderRadius: radii.full,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   title: {
     fontSize: fontSize.lg,

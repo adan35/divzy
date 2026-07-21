@@ -3,13 +3,14 @@
 import { useMemo, useState } from 'react';
 import { startOfMonth, subMonths } from 'date-fns';
 import { RefreshCw, TriangleAlert } from 'lucide-react';
-import { categoryInfo, formatMoney } from '@divzy/shared';
+import { categoryInfo } from '@divzy/shared';
 import { useAnalytics, useGroups, errorMessage } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth-store';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CurrencySelect } from '@/components/ui/currency-select';
 import { EmptyState } from '@/components/ui/empty-state';
+import { MoneyText } from '@/components/ui/money-text';
 import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedControl } from '@/components/ui/segmented';
 import { Select } from '@/components/ui/select';
@@ -24,12 +25,18 @@ import { SpendDelta, StatTile } from '@/components/analytics/stat-tiles';
 import { useChartTheme } from '@/components/analytics/palette';
 
 type RangePreset = '3m' | '6m' | '12m' | 'ytd';
+type Series = 'you' | 'total';
 
 const PRESET_OPTIONS: ReadonlyArray<{ value: RangePreset; label: string }> = [
   { value: '3m', label: '3m' },
   { value: '6m', label: '6m' },
   { value: '12m', label: '12m' },
   { value: 'ytd', label: 'YTD' },
+];
+
+const SERIES_OPTIONS: ReadonlyArray<{ value: Series; label: string }> = [
+  { value: 'you', label: 'You' },
+  { value: 'total', label: 'Total' },
 ];
 
 function rangeFor(preset: RangePreset): { from: string; to: string } {
@@ -69,6 +76,10 @@ export default function AnalyticsPage() {
   const [preset, setPreset] = useState<RangePreset>('6m');
   const [groupId, setGroupId] = useState('');
   const [currencyOverride, setCurrencyOverride] = useState<string | null>(null);
+  // Independent of the query inputs above (not part of useAnalytics's key) —
+  // a pure client-side render switch over already-fetched data.byMonth, so
+  // toggling never triggers a refetch and never resets the other controls.
+  const [series, setSeries] = useState<Series>('you');
 
   const range = useMemo(() => rangeFor(preset), [preset]);
   const currency = currencyOverride ?? me?.defaultCurrency ?? 'USD';
@@ -102,6 +113,14 @@ export default function AnalyticsPage() {
       .map((g) => ({ key: g.groupId, label: g.name, emoji: g.emoji, amount: g.amount }));
     return foldRows(rows);
   }, [data]);
+
+  const trendData = useMemo(() => {
+    if (!data) return [];
+    return data.byMonth.map((m) => ({
+      month: m.month,
+      amount: series === 'you' ? m.amount : m.totalActivity,
+    }));
+  }, [data, series]);
 
   const topCategory = categoryRows.find((r) => r.key !== '__other__') ?? null;
   const isEmpty = data !== undefined && data.yourSpend === 0 && data.totalActivity === 0;
@@ -170,12 +189,12 @@ export default function AnalyticsPage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <StatTile
               label="Your spend"
-              value={formatMoney(data.yourSpend, data.currency)}
+              value={<MoneyText animate amount={data.yourSpend} currency={data.currency} />}
               sub={<SpendDelta current={data.yourSpend} previous={data.previousYourSpend} />}
             />
             <StatTile
               label="Total activity"
-              value={formatMoney(data.totalActivity, data.currency)}
+              value={<MoneyText animate amount={data.totalActivity} currency={data.currency} />}
               sub={<span className="text-ink-3">everything you were part of</span>}
             />
             <StatTile
@@ -192,8 +211,9 @@ export default function AnalyticsPage() {
               }
               sub={
                 topCategory ? (
-                  <span className="text-ink-3 tabular-nums">
-                    {formatMoney(topCategory.amount, data.currency)} in this range
+                  <span className="text-ink-3">
+                    <MoneyText animate amount={topCategory.amount} currency={data.currency} />
+                    {' in this range'}
                   </span>
                 ) : (
                   <span className="text-ink-3">no categorized spend</span>
@@ -205,10 +225,19 @@ export default function AnalyticsPage() {
           {/* Monthly trend */}
           <Card>
             <CardHeader>
-              <CardTitle>Your spend by month</CardTitle>
+              <CardTitle>
+                {series === 'you' ? 'Your spend by month' : 'Total activity by month'}
+              </CardTitle>
+              <SegmentedControl
+                aria-label="Chart series"
+                size="sm"
+                options={SERIES_OPTIONS}
+                value={series}
+                onChange={setSeries}
+              />
             </CardHeader>
             <CardContent>
-              <MonthlyTrendChart data={data.byMonth} currency={data.currency} />
+              <MonthlyTrendChart data={trendData} currency={data.currency} />
             </CardContent>
           </Card>
 

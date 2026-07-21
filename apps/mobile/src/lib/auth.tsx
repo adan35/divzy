@@ -7,9 +7,9 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { ApiError } from '@divzy/api-client';
-import type { RegisterInput, UserDto } from '@divzy/shared';
+import { zLoginInput, type RegisterInput, type UserDto } from '@divzy/shared';
 import {
   api,
   clearStoredTokens,
@@ -17,13 +17,29 @@ import {
   onAuthEvent,
   setStoredTokens,
 } from './api';
+import { queryPersister } from './query-persist';
 
 export type AuthStatus = 'loading' | 'authed' | 'guest';
+
+/**
+ * Clears both the in-memory query cache and its persisted AsyncStorage
+ * mirror (spec-WI-067 §6.5). `queryClient.clear()` alone can leave the last
+ * persisted snapshot on disk (the persister's write is throttled), so every
+ * sign-out / forced-unauth / account-switch point must also wipe the
+ * persisted entry — paired here so the two calls can never drift apart.
+ * Fire-and-forget: a failed disk wipe must not block the auth transition
+ * (same defensive style as `clearStoredTokens().catch(...)` below).
+ */
+export function resetQueryCache(queryClient: QueryClient): void {
+  queryClient.clear();
+  Promise.resolve(queryPersister.removeClient()).catch(() => undefined);
+}
 
 export interface AuthContextValue {
   user: UserDto | null;
   status: AuthStatus;
-  signIn: (email: string, password: string) => Promise<void>;
+  /** identifier: raw email- or phone-shaped string (WI-045) — classified server-side. */
+  signIn: (identifier: string, password: string) => Promise<void>;
   signUp: (input: RegisterInput) => Promise<void>;
   signOut: () => Promise<void>;
   /** Keep the cached profile in sync after PATCH /users/me. */
@@ -86,16 +102,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       onAuthEvent('unauthorized', () => {
         setUserState(null);
         setStatus('guest');
-        queryClient.clear();
+        resetQueryCache(queryClient);
       }),
     [queryClient],
   );
 
   const signIn = useCallback(
-    async (email: string, password: string) => {
-      const res = await api.auth.login({ email, password });
+    async (identifier: string, password: string) => {
+      // WI-045: classify the raw identifier (email- or phone-shaped) via the
+      // same shared schema the server's zLoginInput transform uses, so the
+      // request body carries the {kind, identifier, password} shape the
+      // client's LoginInput type expects — never a hand-rolled duplicate.
+      const parsed = zLoginInput.safeParse({ identifier, password });
+      if (!parsed.success) {
+        throw new Error(
+          parsed.error.issues[0]?.message ?? 'Enter a valid email or phone number',
+        );
+      }
+      const res = await api.auth.login(parsed.data);
       await setStoredTokens(res.accessToken, res.refreshToken);
-      queryClient.clear();
+      resetQueryCache(queryClient);
       setUserState(res.user);
       setStatus('authed');
     },
@@ -106,7 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (input: RegisterInput) => {
       const res = await api.auth.register(input);
       await setStoredTokens(res.accessToken, res.refreshToken);
-      queryClient.clear();
+      resetQueryCache(queryClient);
       setUserState(res.user);
       setStatus('authed');
     },
@@ -123,7 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await clearStoredTokens();
     setUserState(null);
     setStatus('guest');
-    queryClient.clear();
+    resetQueryCache(queryClient);
   }, [queryClient]);
 
   const setUser = useCallback((next: UserDto) => {

@@ -16,6 +16,7 @@ const routes: FastifyPluginAsync = async (app) => {
 
     const where: Prisma.NotificationWhereInput = {
       userId: request.userId,
+      clearedAt: null,
       ...(query.unreadOnly ? { readAt: null } : {}),
     };
 
@@ -33,7 +34,7 @@ const routes: FastifyPluginAsync = async (app) => {
   // -- GET /notifications/unread-count — cheap badge count --------------------
   app.get('/notifications/unread-count', { preHandler: [app.authenticate] }, async (request) => {
     const count = await prisma.notification.count({
-      where: { userId: request.userId, readAt: null },
+      where: { userId: request.userId, readAt: null, clearedAt: null },
     });
     return { count };
   });
@@ -63,11 +64,46 @@ const routes: FastifyPluginAsync = async (app) => {
     },
   );
 
+  // -- POST /notifications/:id/clear — remove from the visible list (own only,
+  // independent of readAt) ------------------------------------------------
+  app.post(
+    '/notifications/:notificationId/clear',
+    { preHandler: [app.authenticate] },
+    async (request, reply) => {
+      const { notificationId } = zNotificationParams.parse(request.params);
+
+      const notification = await prisma.notification.findFirst({
+        where: { id: notificationId, userId: request.userId },
+        select: { id: true, clearedAt: true },
+      });
+      if (!notification) {
+        throw new AppError(404, 'NOT_FOUND', 'Notification not found');
+      }
+
+      if (notification.clearedAt === null) {
+        await prisma.notification.update({
+          where: { id: notification.id },
+          data: { clearedAt: new Date() },
+        });
+      }
+      return reply.status(204).send();
+    },
+  );
+
   // -- POST /notifications/read-all — bulk mark read ---------------------------
   app.post('/notifications/read-all', { preHandler: [app.authenticate] }, async (request, reply) => {
     await prisma.notification.updateMany({
       where: { userId: request.userId, readAt: null },
       data: { readAt: new Date() },
+    });
+    return reply.status(204).send();
+  });
+
+  // -- POST /notifications/clear-all — bulk clear (own only, independent of readAt) --
+  app.post('/notifications/clear-all', { preHandler: [app.authenticate] }, async (request, reply) => {
+    await prisma.notification.updateMany({
+      where: { userId: request.userId, clearedAt: null },
+      data: { clearedAt: new Date() },
     });
     return reply.status(204).send();
   });

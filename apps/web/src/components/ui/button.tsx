@@ -15,16 +15,19 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const VARIANTS: Record<ButtonVariant, string> = {
+  // WI-068 §1.1: button fills consume the dedicated fill tokens — dark
+  // `--brand` is a light link-blue whose white-text contrast would fail;
+  // `--brand-fill`/`--on-brand` keeps white-on-fill >= 4.5:1 in both modes.
   primary:
-    'bg-brand text-white hover:bg-brand-hover active:bg-brand-hover shadow-sm dark:shadow-none',
+    'bg-brand-fill text-on-brand hover:bg-brand-fill-hover active:bg-brand-fill-hover shadow-card',
   secondary:
     'bg-surface-2 text-ink hover:bg-hairline active:bg-hairline',
   ghost:
     'bg-transparent text-ink-2 hover:bg-surface-2 hover:text-ink active:bg-surface-2',
   danger:
-    'bg-danger text-white hover:opacity-90 active:opacity-90 shadow-sm dark:shadow-none',
+    'bg-danger text-on-brand hover:opacity-90 active:opacity-90 shadow-card',
   outline:
-    'border border-hairline bg-surface text-ink hover:bg-surface-2 active:bg-surface-2',
+    'border border-hairline-strong bg-surface text-ink hover:bg-surface-2 active:bg-surface-2',
 };
 
 const SIZES: Record<ButtonSize, string> = {

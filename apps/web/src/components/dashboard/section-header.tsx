@@ -20,7 +20,8 @@ export function SectionHeader({
 }: SectionHeaderProps) {
   return (
     <div className={cn('mb-3 flex items-center justify-between gap-3', className)}>
-      <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
+      {/* WI-068 §2 type scale: section labels are 12px/600/uppercase/+0.06em, ink-3. */}
+      <h2 className="text-xs font-semibold uppercase tracking-[0.06em] text-ink-3">{title}</h2>
       {href && (
         <Link
           href={href}

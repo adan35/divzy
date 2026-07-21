@@ -142,7 +142,7 @@ export function Dialog({
             tabIndex={-1}
             onMouseDown={(e) => e.stopPropagation()}
             className={cn(
-              'animate-pop-in relative w-full rounded-t-xl2 border border-hairline bg-surface shadow-xl focus:outline-none dark:shadow-none sm:rounded-xl2',
+              'animate-pop-in relative w-full rounded-t-xl2 border border-hairline bg-elevated shadow-pop focus:outline-none dark:shadow-top-edge sm:rounded-xl2',
               'max-h-[92dvh] overflow-y-auto',
               SIZES[size],
             )}

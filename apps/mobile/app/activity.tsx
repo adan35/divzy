@@ -12,7 +12,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { format, isToday, isYesterday, parseISO } from 'date-fns';
 import type { ActivityDto } from '@divzy/shared';
-import { EmptyState, ErrorState, Screen, SkeletonList } from '@/components/ui';
+import { EmptyState, ErrorState, Screen, SectionHeader, SkeletonList } from '@/components/ui';
 import { ActivityRow } from '@/components/groups/ActivityRow';
 import { useAuth } from '@/lib/auth';
 import { errorMessage, useActivityInfinite } from '@/lib/hooks';
@@ -94,7 +94,9 @@ export default function ActivityScreen() {
         keyExtractor={(row) => (row.kind === 'day' ? row.key : row.activity.id)}
         renderItem={({ item }) =>
           item.kind === 'day' ? (
-            <Text style={[styles.dayDivider, { color: colors.ink2 }]}>{item.label}</Text>
+            // WI-068 §9.2 — day separators styled as section labels
+            // (uppercase, ink3, 12/600 tracking) rather than a bespoke style.
+            <SectionHeader title={item.label} />
           ) : (
             <ActivityRow activity={item.activity} currentUserId={user?.id} />
           )
@@ -160,13 +162,6 @@ const styles = StyleSheet.create({
   content: {
     paddingBottom: spacing.xxl,
     flexGrow: 1,
-  },
-  dayDivider: {
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.xs,
   },
   skeleton: {
     marginTop: spacing.lg,

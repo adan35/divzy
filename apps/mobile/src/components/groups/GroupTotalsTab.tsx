@@ -1,15 +1,17 @@
 import { useMemo } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
-import { formatMoney, type ExpenseDto, type PublicUserDto } from '@divzy/shared';
+import type { ExpenseDto, PublicUserDto } from '@divzy/shared';
 import {
   Avatar,
   Card,
   EmptyState,
   ErrorState,
+  MoneyText,
   SectionHeader,
   SkeletonList,
 } from '@/components/ui';
+import { GroupMonthlyChart } from '@/components/groups/GroupMonthlyChart';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/hooks';
 import { fontSize, spacing, useTheme } from '@/theme';
@@ -113,33 +115,50 @@ export function GroupTotalsTab({ groupId, currentUserId }: GroupTotalsTabProps) 
           hint="Totals appear once the group has expenses."
         />
       ) : (
-        totals.map((t) => (
-          <View key={t.currency}>
-            <SectionHeader title={`${t.currency} TOTALS`} style={styles.section} />
-            <Card style={styles.card}>
-              <Text style={[styles.totalLabel, { color: colors.ink2 }]}>Total spent</Text>
-              <Text style={[styles.totalValue, { color: colors.ink }]}>
-                {formatMoney(t.total, t.currency)}
-              </Text>
-              <Text style={[styles.totalMeta, { color: colors.ink3 }]}>
-                {t.count} {t.count === 1 ? 'expense' : 'expenses'}
-              </Text>
-              <View style={[styles.divider, { backgroundColor: colors.hairline }]} />
-              {t.byMember.map((m) => (
-                <View key={m.user.id} style={styles.memberRow}>
-                  <Avatar name={m.user.name} color={m.user.avatarColor} size={30} />
-                  <Text numberOfLines={1} style={[styles.memberName, { color: colors.ink }]}>
-                    {m.user.id === currentUserId ? 'You' : m.user.name}
-                  </Text>
-                  <Text style={[styles.memberPaid, { color: colors.ink }]}>
-                    {formatMoney(m.paid, t.currency)}
-                  </Text>
-                </View>
-              ))}
-              <Text style={[styles.paidNote, { color: colors.ink3 }]}>paid per member</Text>
-            </Card>
-          </View>
-        ))
+        <>
+          <GroupMonthlyChart groupId={groupId} style={styles.card} />
+          {totals.map((t) => (
+            <View key={t.currency}>
+              <SectionHeader title={`${t.currency} TOTALS`} style={styles.section} />
+              <Card style={styles.card}>
+                <Text style={[styles.totalLabel, { color: colors.ink2 }]}>Total spent</Text>
+                <MoneyText
+                  amount={t.total}
+                  currency={t.currency}
+                  colored={false}
+                  size={fontSize.xxl}
+                  weight="700"
+                  style={styles.totalValue}
+                />
+                <Text style={[styles.totalMeta, { color: colors.ink3 }]}>
+                  {t.count} {t.count === 1 ? 'expense' : 'expenses'}
+                </Text>
+                <View style={[styles.divider, { backgroundColor: colors.hairline }]} />
+                {t.byMember.map((m) => (
+                  <View key={m.user.id} style={styles.memberRow}>
+                    <Avatar
+                      name={m.user.name}
+                      color={m.user.avatarColor}
+                      avatarUrl={m.user.avatarUrl}
+                      size={30}
+                    />
+                    <Text numberOfLines={1} style={[styles.memberName, { color: colors.ink }]}>
+                      {m.user.id === currentUserId ? 'You' : m.user.name}
+                    </Text>
+                    <MoneyText
+                      amount={m.paid}
+                      currency={t.currency}
+                      colored={false}
+                      size={fontSize.md}
+                      weight="600"
+                    />
+                  </View>
+                ))}
+                <Text style={[styles.paidNote, { color: colors.ink3 }]}>paid per member</Text>
+              </Card>
+            </View>
+          ))}
+        </>
       )}
     </ScrollView>
   );
@@ -163,9 +182,6 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
   },
   totalValue: {
-    fontSize: fontSize.xxl,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
     marginTop: 2,
   },
   totalMeta: {

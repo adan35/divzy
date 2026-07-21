@@ -23,7 +23,9 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
   const { colors } = useTheme();
   const [focused, setFocused] = useState(false);
 
-  const borderColor = error ? colors.danger : focused ? colors.brand : colors.hairline;
+  // WI-068 §1.1: inputs wear hairlineStrong at rest and the ring token when
+  // focused (color change only — width never changes, so layout never shifts).
+  const borderColor = error ? colors.danger : focused ? colors.ring : colors.hairlineStrong;
 
   return (
     <View style={containerStyle}>

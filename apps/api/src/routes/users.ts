@@ -1,13 +1,18 @@
 import type { FastifyPluginAsync } from 'fastify';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import {
+  NOTIFICATION_CATEGORIES,
   isSupportedCurrency,
   zChangePasswordInput,
   zRegisterPushTokenInput,
   zUpdateMeInput,
+  zUpdateNotificationPreferencesInput,
   zUserSearchQuery,
+  type NotificationPreferenceDto,
+  type NotificationPreferencesDto,
 } from '@divzy/shared';
 import { hashPassword, verifyPassword } from '../lib/auth';
+import { bumpUserGeneration } from '../lib/cache';
 import { AppError } from '../lib/errors';
 import { prisma } from '../lib/prisma';
 import { publicUserSelect, toPublicUser, toUserDto } from '../lib/serializers';
@@ -24,13 +29,50 @@ const routes: FastifyPluginAsync = async (app) => {
       );
     }
 
+    // WI-067 / ADR-030 site C1 (CEO gate ruling, required): a converted
+    // /balance or /analytics/summary figure depends on the caller's
+    // defaultCurrency, so a genuine change must bump — but ONLY when it
+    // actually changes value (read the pre-update value first; TTL covers
+    // any other field's staleness fine).
+    const previous =
+      input.defaultCurrency !== undefined
+        ? await prisma.user.findUnique({
+            where: { id: request.userId },
+            select: { defaultCurrency: true },
+          })
+        : null;
+
     const data: Prisma.UserUpdateInput = {};
     if (input.name !== undefined) data.name = input.name;
     if (input.avatarColor !== undefined) data.avatarColor = input.avatarColor;
+    // avatarUrl: string sets (already constrained server-side by zAvatarUrl to
+    // a /uploads/avatars/<hex>.<ext> path this server's own upload handler
+    // produced — WI-035 DRB security condition), null clears. Setting null
+    // when already null is a no-op update, never an error (idempotent).
+    if (input.avatarUrl !== undefined) data.avatarUrl = input.avatarUrl;
     if (input.defaultCurrency !== undefined) data.defaultCurrency = input.defaultCurrency;
     if (input.emailNotifications !== undefined) data.emailNotifications = input.emailNotifications;
+    if (input.staleBalanceRemindersEnabled !== undefined)
+      data.staleBalanceRemindersEnabled = input.staleBalanceRemindersEnabled;
+    // phone: string sets, null clears, omitted leaves unchanged. Idempotent
+    // no-op if already null/that value (WI-045).
+    if (input.phone !== undefined) data.phone = input.phone;
 
-    const user = await prisma.user.update({ where: { id: request.userId }, data });
+    let user;
+    try {
+      user = await prisma.user.update({ where: { id: request.userId }, data });
+    } catch (err) {
+      // Concurrent phone-set race, same P2002 pattern as EMAIL_TAKEN (WI-045/ADR-024).
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new AppError(409, 'PHONE_TAKEN', 'That phone number is already in use by another account');
+      }
+      throw err;
+    }
+
+    if (input.defaultCurrency !== undefined && previous?.defaultCurrency !== input.defaultCurrency) {
+      bumpUserGeneration(request.userId);
+    }
+
     return toUserDto(user);
   });
 
@@ -70,14 +112,15 @@ const routes: FastifyPluginAsync = async (app) => {
     return reply.code(204).send();
   });
 
-  // -- GET /users/search?email= ------------------------------------------------------
+  // -- GET /users/search?email=|phone= (WI-045) ---------------------------------------
   app.get('/users/search', { preHandler: [app.authenticate] }, async (request, reply) => {
     const query = zUserSearchQuery.parse(request.query);
     const user = await prisma.user.findUnique({
-      where: { email: query.email },
+      where: query.email ? { email: query.email } : { phone: query.phone! },
       select: publicUserSelect,
     });
-    // Exact match or JSON null — never a list, never the email itself.
+    // Exact match or JSON null — never a list, never the email/phone itself
+    // (publicUserSelect never includes phone — structurally enforced, WI-045).
     return reply.send(user ? toPublicUser(user) : null);
   });
 
@@ -92,6 +135,70 @@ const routes: FastifyPluginAsync = async (app) => {
     });
     return reply.code(204).send();
   });
+
+  // -- GET /users/me/notification-preferences (WI-041, auth's slice) ----------------------
+  // Returns the fully-resolved matrix (all 9 canonical categories, absent row
+  // = both channels on) — auth's OWN read contract, distinct from
+  // notifications-activity's send-time gating (which this route does not
+  // implement, per DRB architecture condition C1). Scoped exclusively to
+  // request.userId — never a userId from params/query (IDOR guard).
+  app.get(
+    '/users/me/notification-preferences',
+    { preHandler: [app.authenticate] },
+    async (request): Promise<NotificationPreferencesDto> => {
+      const rows = await prisma.notificationPreference.findMany({
+        where: { userId: request.userId },
+      });
+      const byCategory = new Map(rows.map((r) => [r.category, r]));
+
+      const categories: NotificationPreferenceDto[] = NOTIFICATION_CATEGORIES.map((c) => {
+        const row = byCategory.get(c.key);
+        return {
+          category: c.key,
+          pushEnabled: row ? row.pushEnabled : true,
+          emailEnabled: row ? row.emailEnabled : true,
+          available: c.available,
+        };
+      });
+
+      return { categories };
+    },
+  );
+
+  // -- PATCH /users/me/notification-preferences (WI-041, auth's slice) --------------------
+  // Partial per-cell upsert on (userId, category). The input schema carries
+  // only { category, pushEnabled?, emailEnabled? } — no userId anywhere in the
+  // body — and userId is derived exclusively from request.userId on every
+  // upsert (both `where` and `create`), mirroring PATCH /users/me. This is the
+  // DRB security IDOR guard: no request value can retarget another user's row.
+  app.patch(
+    '/users/me/notification-preferences',
+    { preHandler: [app.authenticate] },
+    async (request, reply) => {
+      const input = zUpdateNotificationPreferencesInput.parse(request.body);
+
+      await Promise.all(
+        input.preferences.map((pref) => {
+          const update: { pushEnabled?: boolean; emailEnabled?: boolean } = {};
+          if (pref.pushEnabled !== undefined) update.pushEnabled = pref.pushEnabled;
+          if (pref.emailEnabled !== undefined) update.emailEnabled = pref.emailEnabled;
+
+          return prisma.notificationPreference.upsert({
+            where: { userId_category: { userId: request.userId, category: pref.category } },
+            update,
+            create: {
+              userId: request.userId,
+              category: pref.category,
+              ...(pref.pushEnabled !== undefined ? { pushEnabled: pref.pushEnabled } : {}),
+              ...(pref.emailEnabled !== undefined ? { emailEnabled: pref.emailEnabled } : {}),
+            },
+          });
+        }),
+      );
+
+      return reply.code(204).send();
+    },
+  );
 };
 
 export default routes;

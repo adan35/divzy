@@ -4,6 +4,8 @@ import type {
   ActivityType,
   CommentDto,
   ExpenseDto,
+  ExpenseFieldChange,
+  ExpenseRevisionDto,
   GroupDto,
   GroupMemberDto,
   NotificationDto,
@@ -19,15 +21,25 @@ import type {
 // the DTO serializers below always have what they need.
 // ---------------------------------------------------------------------------
 
-export const publicUserSelect = { id: true, name: true, avatarColor: true } as const;
+export const publicUserSelect = {
+  id: true,
+  name: true,
+  avatarColor: true,
+  avatarUrl: true,
+} as const;
 
 const groupSummarySelect = { id: true, name: true, emoji: true } as const;
+
+// Expense rows additionally need the group's home currency (WI-014, spec §3)
+// to compute/render a converted figure — scoped to expenses only so the
+// settlement/activity/recurring DTO paths don't load a field they never use.
+const expenseGroupSelect = { id: true, name: true, emoji: true, currency: true } as const;
 
 export const expenseInclude = {
   payers: { include: { user: { select: publicUserSelect } } },
   splits: { include: { user: { select: publicUserSelect } } },
   items: true,
-  group: { select: groupSummarySelect },
+  group: { select: expenseGroupSelect },
   createdBy: { select: publicUserSelect },
   updatedBy: { select: publicUserSelect },
   _count: { select: { comments: true } },
@@ -58,6 +70,10 @@ export const recurringInclude = {
   group: { select: groupSummarySelect },
 } as const satisfies Prisma.RecurringExpenseInclude;
 
+export const expenseRevisionInclude = {
+  actor: { select: publicUserSelect },
+} as const satisfies Prisma.ExpenseRevisionInclude;
+
 // ---------------------------------------------------------------------------
 // Prisma payload types matching the includes above.
 // ---------------------------------------------------------------------------
@@ -78,6 +94,9 @@ export type ActivityWithRelations = Prisma.ActivityLogGetPayload<{
 export type RecurringWithRelations = Prisma.RecurringExpenseGetPayload<{
   include: typeof recurringInclude;
 }>;
+export type ExpenseRevisionWithRelations = Prisma.ExpenseRevisionGetPayload<{
+  include: typeof expenseRevisionInclude;
+}>;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -90,12 +109,35 @@ function toRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+const KNOWN_EXPENSE_FIELD_CHANGE_FIELDS = new Set<ExpenseFieldChange['field']>([
+  'description',
+  'amount',
+  'currency',
+  'category',
+  'date',
+  'splitType',
+  'notes',
+  'receiptUrl',
+]);
+
+/** Narrow the untyped `ExpenseRevision.changes` Json into `ExpenseFieldChange[]`. */
+function toExpenseFieldChanges(value: unknown): ExpenseFieldChange[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (el): el is ExpenseFieldChange =>
+      typeof el === 'object' &&
+      el !== null &&
+      'field' in el &&
+      KNOWN_EXPENSE_FIELD_CHANGE_FIELDS.has((el as { field: ExpenseFieldChange['field'] }).field),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Serializers — Prisma payloads in, shared DTOs out. Dates → ISO strings.
 // ---------------------------------------------------------------------------
 
 export function toPublicUser(user: PublicUserPayload): PublicUserDto {
-  return { id: user.id, name: user.name, avatarColor: user.avatarColor };
+  return { id: user.id, name: user.name, avatarColor: user.avatarColor, avatarUrl: user.avatarUrl };
 }
 
 export function toUserDto(user: User): UserDto {
@@ -103,9 +145,12 @@ export function toUserDto(user: User): UserDto {
     id: user.id,
     name: user.name,
     avatarColor: user.avatarColor,
+    avatarUrl: user.avatarUrl,
     email: user.email,
+    phone: user.phone,
     defaultCurrency: user.defaultCurrency,
     emailNotifications: user.emailNotifications,
+    staleBalanceRemindersEnabled: user.staleBalanceRemindersEnabled,
     createdAt: user.createdAt.toISOString(),
   };
 }
@@ -143,7 +188,12 @@ export function toExpenseDto(expense: ExpenseWithRelations): ExpenseDto {
     id: expense.id,
     groupId: expense.groupId,
     group: expense.group
-      ? { id: expense.group.id, name: expense.group.name, emoji: expense.group.emoji }
+      ? {
+          id: expense.group.id,
+          name: expense.group.name,
+          emoji: expense.group.emoji,
+          currency: expense.group.currency,
+        }
       : null,
     description: expense.description,
     amount: expense.amount,
@@ -189,6 +239,7 @@ export function toSettlementDto(settlement: SettlementWithRelations): Settlement
     currency: settlement.currency,
     method: settlement.method,
     note: settlement.note,
+    proofUrl: settlement.proofUrl,
     date: settlement.date.toISOString(),
     createdBy: toPublicUser(settlement.createdBy),
     deletedAt: settlement.deletedAt ? settlement.deletedAt.toISOString() : null,
@@ -217,6 +268,13 @@ export function toActivityDto(activity: ActivityWithRelations): ActivityDto {
     expenseId: activity.expenseId,
     settlementId: activity.settlementId,
     data: toRecord(activity.data),
+    // Viewer-agnostic by design (spec-WI-054 §2) — the route enriches this
+    // per-caller; a freshly created row (the activity:new socket emit) is
+    // correctly deletedAt: null.
+    deletedAt: null,
+    // Viewer-agnostic by design (spec-WI-055 §3) — the route computes this
+    // per-caller alongside deletedAt.
+    colorHint: null,
     createdAt: activity.createdAt.toISOString(),
   };
 }
@@ -229,7 +287,19 @@ export function toNotificationDto(notification: Notification): NotificationDto {
     body: notification.body,
     data: toRecord(notification.data),
     readAt: notification.readAt ? notification.readAt.toISOString() : null,
+    clearedAt: notification.clearedAt ? notification.clearedAt.toISOString() : null,
     createdAt: notification.createdAt.toISOString(),
+  };
+}
+
+export function toExpenseRevisionDto(r: ExpenseRevisionWithRelations): ExpenseRevisionDto {
+  return {
+    id: r.id,
+    expenseId: r.expenseId,
+    actor: toPublicUser(r.actor),
+    kind: r.kind,
+    changes: toExpenseFieldChanges(r.changes),
+    createdAt: r.createdAt.toISOString(),
   };
 }
 

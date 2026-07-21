@@ -101,7 +101,10 @@ const routes: FastifyPluginAsync = async (app) => {
   // -- POST /auth/login ---------------------------------------------------------
   app.post('/auth/login', { config: authRateLimit }, async (request, reply) => {
     const input = zLoginInput.parse(request.body);
-    const user = await prisma.user.findUnique({ where: { email: input.email } });
+    // Exactly one targeted lookup per kind (never both) — WI-045/ADR-024.
+    const user = await prisma.user.findUnique({
+      where: input.kind === 'email' ? { email: input.identifier } : { phone: input.identifier },
+    });
     const passwordOk = user ? await verifyPassword(user.passwordHash, input.password) : false;
     if (!user || !passwordOk) throw invalidCredentials();
 

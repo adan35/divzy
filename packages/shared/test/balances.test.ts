@@ -176,3 +176,4 @@ describe('netsForUser', () => {
     expect(netsForUser(nets, B)).toEqual([]);
   });
 });
+

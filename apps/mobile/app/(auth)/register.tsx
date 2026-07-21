@@ -8,18 +8,19 @@ import {
   View,
 } from 'react-native';
 import { Link } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LIMITS } from '@divzy/shared';
 import { useAuth } from '@/lib/auth';
 import { errorMessage } from '@/lib/hooks';
 import { Button, CurrencyPicker, Input, Screen } from '@/components/ui';
-import { fontSize, spacing, useTheme, withAlpha } from '@/theme';
+import { fontSize, radii, spacing, topEdgeHighlight, useTheme, withAlpha } from '@/theme';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function RegisterScreen() {
   const { signUp } = useAuth();
-  const { colors } = useTheme();
+  const { colors, scheme } = useTheme();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -92,78 +93,101 @@ export default function RegisterScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text style={[styles.brand, { color: colors.brand }]}>Divzy</Text>
-          <Text style={[styles.title, { color: colors.ink }]}>Create your account</Text>
-          <Text style={[styles.subtitle, { color: colors.ink2 }]}>
-            Split expenses with friends — fast, fair, free.
+          {/* WI-068 §9.2 — type-only wordmark treatment (no logo change),
+              mirroring the web nav-shell/auth treatment. */}
+          <Text style={[styles.brand, { color: colors.ink }]}>
+            divzy
+            <Text style={{ color: colors.accent }}>.</Text>
           </Text>
 
-          {formError ? (
-            <View style={[styles.banner, { backgroundColor: withAlpha(colors.danger, 0.12) }]}>
-              <Text style={[styles.bannerText, { color: colors.danger }]}>{formError}</Text>
-            </View>
-          ) : null}
+          {/* Auth card on `elevated` (spec §9.2) — same elevation contract as
+              Card.tsx, applied locally (Card is fixed to `surface`, S1-owned). */}
+          <View
+            style={[
+              styles.card,
+              { backgroundColor: colors.elevated, borderColor: colors.hairline },
+              scheme === 'light' && [styles.cardShadow, { shadowColor: colors.ink }],
+            ]}
+          >
+            {scheme === 'dark' ? (
+              <View
+                pointerEvents="none"
+                style={[styles.cardTopEdge, { backgroundColor: topEdgeHighlight }]}
+              />
+            ) : null}
+            <Text style={[styles.title, { color: colors.ink }]}>Create your account</Text>
+            <Text style={[styles.subtitle, { color: colors.ink2 }]}>
+              Split expenses with friends — fast, fair, free.
+            </Text>
 
-          <Input
-            label="Name"
-            value={name}
-            onChangeText={(value) => {
-              setName(value);
-              if (nameError) setNameError(validateName(value));
-            }}
-            onBlur={() => setNameError(validateName(name))}
-            error={nameError}
-            autoComplete="name"
-            autoCapitalize="words"
-            returnKeyType="next"
-            containerStyle={styles.field}
-          />
-          <Input
-            label="Email"
-            value={email}
-            onChangeText={(value) => {
-              setEmail(value);
-              if (emailError) setEmailError(validateEmail(value));
-            }}
-            onBlur={() => setEmailError(validateEmail(email))}
-            error={emailError}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoComplete="email"
-            autoCorrect={false}
-            returnKeyType="next"
-            containerStyle={styles.field}
-          />
-          <Input
-            label="Password"
-            value={password}
-            onChangeText={(value) => {
-              setPassword(value);
-              if (passwordError) setPasswordError(validatePassword(value));
-            }}
-            onBlur={() => setPasswordError(validatePassword(password))}
-            error={passwordError}
-            secureTextEntry
-            autoComplete="new-password"
-            returnKeyType="done"
-            containerStyle={styles.field}
-          />
-          <CurrencyPicker
-            label="Default currency"
-            value={currency}
-            onChange={setCurrency}
-            containerStyle={styles.field}
-          />
+            {formError ? (
+              <View style={[styles.banner, { backgroundColor: withAlpha(colors.neg, 0.12) }]}>
+                <Ionicons name="alert-circle" size={16} color={colors.neg} />
+                <Text style={[styles.bannerText, { color: colors.neg }]}>{formError}</Text>
+              </View>
+            ) : null}
 
-          <Button
-            title="Create account"
-            onPress={handleSubmit}
-            loading={submitting}
-            disabled={!canSubmit}
-            size="lg"
-            fullWidth
-            style={styles.submit}
-          />
+            <Input
+              label="Name"
+              value={name}
+              onChangeText={(value) => {
+                setName(value);
+                if (nameError) setNameError(validateName(value));
+              }}
+              onBlur={() => setNameError(validateName(name))}
+              error={nameError}
+              autoComplete="name"
+              autoCapitalize="words"
+              returnKeyType="next"
+              containerStyle={styles.field}
+            />
+            <Input
+              label="Email"
+              value={email}
+              onChangeText={(value) => {
+                setEmail(value);
+                if (emailError) setEmailError(validateEmail(value));
+              }}
+              onBlur={() => setEmailError(validateEmail(email))}
+              error={emailError}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoComplete="email"
+              autoCorrect={false}
+              returnKeyType="next"
+              containerStyle={styles.field}
+            />
+            <Input
+              label="Password"
+              value={password}
+              onChangeText={(value) => {
+                setPassword(value);
+                if (passwordError) setPasswordError(validatePassword(value));
+              }}
+              onBlur={() => setPasswordError(validatePassword(password))}
+              error={passwordError}
+              secureTextEntry
+              autoComplete="new-password"
+              returnKeyType="done"
+              containerStyle={styles.field}
+            />
+            <CurrencyPicker
+              label="Default currency"
+              value={currency}
+              onChange={setCurrency}
+              containerStyle={styles.field}
+            />
+
+            <Button
+              title="Create account"
+              onPress={handleSubmit}
+              loading={submitting}
+              disabled={!canSubmit}
+              size="lg"
+              fullWidth
+              style={styles.submit}
+            />
+          </View>
 
           <View style={styles.footer}>
             <Text style={[styles.footerText, { color: colors.ink2 }]}>
@@ -188,15 +212,36 @@ const styles = StyleSheet.create({
   },
   brand: {
     fontSize: fontSize.xl,
-    fontWeight: '800',
+    fontWeight: '700',
     textAlign: 'center',
     letterSpacing: 0.5,
+    marginBottom: spacing.lg,
+  },
+  // WI-068 §9.2 — auth card on `elevated`, matching Card.tsx's own elevation
+  // contract (light shadow-1 / dark hairline + top-edge highlight).
+  card: {
+    borderRadius: radii.xl,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: spacing.xl,
+  },
+  cardShadow: {
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  cardTopEdge: {
+    position: 'absolute',
+    top: StyleSheet.hairlineWidth,
+    left: radii.lg,
+    right: radii.lg,
+    height: 1,
+    borderRadius: 0.5,
   },
   title: {
     fontSize: fontSize.xxl,
     fontWeight: '700',
     textAlign: 'center',
-    marginTop: spacing.lg,
   },
   subtitle: {
     fontSize: fontSize.md,
@@ -205,11 +250,15 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
   },
   banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
     borderRadius: 12,
     padding: spacing.md,
     marginBottom: spacing.lg,
   },
   bannerText: {
+    flex: 1,
     fontSize: fontSize.sm,
     fontWeight: '500',
   },

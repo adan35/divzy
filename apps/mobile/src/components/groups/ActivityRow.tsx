@@ -1,9 +1,12 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { formatMoney, type ActivityDto, type ActivityType } from '@divzy/shared';
+import type { ActivityDto, ActivityType } from '@divzy/shared';
+import { activitySentence } from '@/lib/activitySentence';
+import { activityRowVisualState } from '@/lib/activityRowStyle';
+import { resolveActivityTarget } from '@/lib/activityTarget';
 import { formatRelative } from '@/lib/format';
-import { fontSize, spacing, useTheme } from '@/theme';
+import { fontSize, spacing, useTheme, withAlpha } from '@/theme';
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -11,8 +14,13 @@ const TYPE_ICONS: Record<ActivityType, IconName> = {
   EXPENSE_ADDED: 'receipt-outline',
   EXPENSE_UPDATED: 'create-outline',
   EXPENSE_DELETED: 'trash-outline',
+  // WI-054 — RESTORED rows never surface as their own feed row (the collapse
+  // algorithm folds them into their ADDED anchor's `deletedAt`), but the enum
+  // member still needs an icon for this Record to stay exhaustive.
+  EXPENSE_RESTORED: 'refresh-outline',
   SETTLEMENT_ADDED: 'swap-horizontal',
   SETTLEMENT_DELETED: 'trash-outline',
+  SETTLEMENT_RESTORED: 'refresh-outline',
   GROUP_CREATED: 'people-outline',
   GROUP_UPDATED: 'settings-outline',
   MEMBER_JOINED: 'person-add-outline',
@@ -23,99 +31,33 @@ const TYPE_ICONS: Record<ActivityType, IconName> = {
   RECURRING_POSTED: 'repeat-outline',
 };
 
-function str(data: Record<string, unknown>, key: string): string | null {
-  const value = data[key];
-  return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
-function money(data: Record<string, unknown>): string | null {
-  const amount = data['amount'];
-  const currency = data['currency'];
-  if (typeof amount === 'number' && Number.isInteger(amount) && typeof currency === 'string') {
-    try {
-      return formatMoney(amount, currency);
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-/** Human sentence for any activity type, with "You" for the current user. */
-export function activitySentence(activity: ActivityDto, currentUserId?: string): string {
-  const actor = activity.actor.id === currentUserId ? 'You' : activity.actor.name;
-  const data = activity.data ?? {};
-  const description = str(data, 'description');
-  const amountText = money(data);
-  const withAmount = (base: string) => (amountText ? `${base} · ${amountText}` : base);
-
-  switch (activity.type) {
-    case 'EXPENSE_ADDED':
-      return withAmount(`${actor} added ${description ? `“${description}”` : 'an expense'}`);
-    case 'EXPENSE_UPDATED':
-      return withAmount(`${actor} updated ${description ? `“${description}”` : 'an expense'}`);
-    case 'EXPENSE_DELETED':
-      return `${actor} deleted ${description ? `“${description}”` : 'an expense'}`;
-    case 'SETTLEMENT_ADDED': {
-      const fromName = str(data, 'fromName') ?? actor;
-      const toName = str(data, 'toName') ?? 'someone';
-      return withAmount(`${fromName} paid ${toName}`);
-    }
-    case 'SETTLEMENT_DELETED':
-      return withAmount(`${actor} deleted a payment`);
-    case 'GROUP_CREATED':
-      return `${actor} created ${activity.group ? `“${activity.group.name}”` : 'a group'}`;
-    case 'GROUP_UPDATED':
-      return `${actor} updated the group settings`;
-    case 'MEMBER_JOINED': {
-      const memberName = str(data, 'memberName') ?? str(data, 'name');
-      if (memberName && memberName !== activity.actor.name) {
-        return `${actor} added ${memberName} to the group`;
-      }
-      return `${actor} joined the group`;
-    }
-    case 'MEMBER_LEFT':
-      return `${actor} left the group`;
-    case 'MEMBER_REMOVED': {
-      const memberName = str(data, 'memberName') ?? str(data, 'name');
-      return `${actor} removed ${memberName ?? 'a member'} from the group`;
-    }
-    case 'COMMENT_ADDED':
-      return description
-        ? `${actor} commented on “${description}”`
-        : `${actor} added a comment`;
-    case 'FRIEND_ADDED': {
-      const friendName = str(data, 'friendName') ?? str(data, 'name');
-      return friendName
-        ? `${actor} added ${friendName} as a friend`
-        : `${actor} added a new friend`;
-    }
-    case 'RECURRING_POSTED':
-      return withAmount(
-        description
-          ? `Recurring expense “${description}” was posted automatically`
-          : 'A recurring expense was posted automatically',
-      );
-    default:
-      return `${actor} made a change`;
-  }
-}
-
 export interface ActivityRowProps {
   activity: ActivityDto;
   currentUserId?: string;
 }
 
-/** Feed row: type icon, sentence, relative time + group context. Taps open the related expense or group. */
+/**
+ * Feed row: type icon, sentence, relative time + group context. Taps
+ * navigate per `resolveActivityTarget` (WI-039/ADR-022) — expense-backed
+ * items go straight to the expense detail screen; settlement/membership
+ * items link through to the group or friend page; `FRIEND_ADDED` is no
+ * longer a dead click.
+ *
+ * WI-054 — a row whose entity is currently deleted (`activity.deletedAt !=
+ * null`) strikes through the sentence and dims the row, but stays tappable
+ * to the existing (read-only) detail screen — no restore affordance yet
+ * (Part 2 is blocked on expenses/settlements, spec-WI-054 §5).
+ * WI-055 — otherwise, `activity.colorHint` tints the icon bubble with this
+ * app's existing `colors.pos`/`colors.neg` tokens (same ones `MoneyText`/
+ * `ExpenseRow` use), never a new color.
+ */
 export function ActivityRow({ activity, currentUserId }: ActivityRowProps) {
   const router = useRouter();
   const { colors } = useTheme();
 
-  const target = activity.expenseId
-    ? `/expense/${activity.expenseId}`
-    : activity.group
-      ? `/group/${activity.group.id}`
-      : null;
+  const target = resolveActivityTarget(activity, currentUserId);
+  const { struck, accent } = activityRowVisualState(activity);
+  const accentColor = accent === 'pos' ? colors.pos : accent === 'neg' ? colors.neg : null;
 
   const meta = `${formatRelative(activity.createdAt)}${
     activity.group ? ` · ${activity.group.emoji} ${activity.group.name}` : ''
@@ -126,13 +68,26 @@ export function ActivityRow({ activity, currentUserId }: ActivityRowProps) {
       accessibilityRole={target ? 'button' : undefined}
       disabled={!target}
       onPress={target ? () => router.push(target) : undefined}
-      style={({ pressed }) => [styles.row, pressed && target ? { backgroundColor: colors.surface2 } : null]}
+      style={({ pressed }) => [
+        styles.row,
+        struck && styles.struckRow,
+        pressed && target ? { backgroundColor: colors.surface2 } : null,
+      ]}
     >
-      <View style={[styles.iconBubble, { backgroundColor: colors.surface2 }]}>
-        <Ionicons name={TYPE_ICONS[activity.type] ?? 'flash-outline'} size={17} color={colors.ink2} />
+      <View
+        style={[
+          styles.iconBubble,
+          { backgroundColor: accentColor ? withAlpha(accentColor, 0.15) : colors.surface2 },
+        ]}
+      >
+        <Ionicons
+          name={TYPE_ICONS[activity.type] ?? 'flash-outline'}
+          size={17}
+          color={accentColor ?? colors.ink2}
+        />
       </View>
       <View style={styles.body}>
-        <Text style={[styles.sentence, { color: colors.ink }]}>
+        <Text style={[styles.sentence, { color: colors.ink }, struck && styles.struckText]}>
           {activitySentence(activity, currentUserId)}
         </Text>
         <Text numberOfLines={1} style={[styles.meta, { color: colors.ink3 }]}>
@@ -150,6 +105,14 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.xs,
     borderRadius: 10,
+  },
+  // WI-054 — mirrors GroupCard's `archived: { opacity: 0.65 }` dimming
+  // convention for an entity that is no longer "live".
+  struckRow: {
+    opacity: 0.65,
+  },
+  struckText: {
+    textDecorationLine: 'line-through',
   },
   iconBubble: {
     width: 36,

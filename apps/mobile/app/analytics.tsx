@@ -13,31 +13,10 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { format, isValid, parseISO, startOfMonth, subMonths } from 'date-fns';
 import { categoryInfo, formatMoney } from '@divzy/shared';
-import { Card, EmptyState, ErrorState, SegmentedControl, Skeleton } from '@/components/ui';
+import { Card, EmptyState, ErrorState, MoneyText, SegmentedControl, Skeleton } from '@/components/ui';
 import { errorMessage, useAnalytics } from '@/lib/hooks';
-import { fontSize, radii, spacing, useTheme, withAlpha } from '@/theme';
-
-// Categorical chart palettes — fixed order, never cycled (STYLE.md §Charts).
-const CHART_PALETTE_LIGHT = [
-  '#2a78d6',
-  '#1baf7a',
-  '#eda100',
-  '#008300',
-  '#4a3aa7',
-  '#e34948',
-  '#e87ba4',
-  '#eb6834',
-] as const;
-const CHART_PALETTE_DARK = [
-  '#3987e5',
-  '#199e70',
-  '#c98500',
-  '#008300',
-  '#9085e9',
-  '#e66767',
-  '#d55181',
-  '#d95926',
-] as const;
+import { monthlySeriesValue, type MonthlySeries } from '@/lib/monthlySeries';
+import { chartOtherColor, chartPalette, fontSize, radii, spacing, useTheme, withAlpha } from '@/theme';
 
 type Period = '3m' | '6m' | '12m';
 const PERIOD_MONTHS: Record<Period, number> = { '3m': 3, '6m': 6, '12m': 12 };
@@ -55,6 +34,7 @@ export default function AnalyticsScreen() {
   const router = useRouter();
   const [period, setPeriod] = useState<Period>('6m');
   const [activeBar, setActiveBar] = useState<number | null>(null);
+  const [series, setSeries] = useState<MonthlySeries>('you');
 
   const range = useMemo(() => {
     const now = new Date();
@@ -64,22 +44,26 @@ export default function AnalyticsScreen() {
 
   const query = useAnalytics(range);
   const data = query.data;
-  const palette = scheme === 'dark' ? CHART_PALETTE_DARK : CHART_PALETTE_LIGHT;
+  // WI-068 §8.1 — the validated categorical order, fixed per scheme, never
+  // cycled; >8 categories fold into the fixed `chartOtherColor`.
+  const palette = chartPalette[scheme];
 
   // -- Derived chart data -------------------------------------------------------
 
   const months = data?.byMonth ?? [];
-  const maxMonth = months.reduce((acc, m) => Math.max(acc, m.amount), 0);
+  const maxMonth = months.reduce((acc, m) => Math.max(acc, monthlySeriesValue(m, series)), 0);
   const activeIndex =
     activeBar !== null && activeBar < months.length ? activeBar : months.length - 1;
 
   const categories = useMemo(() => {
     if (!data) return [];
     const sorted = [...data.byCategory].sort((a, b) => b.amount - a.amount);
-    if (sorted.length <= 8) return sorted.map((c, i) => ({ ...c, color: palette[i] ?? null }));
-    const top = sorted.slice(0, 7).map((c, i) => ({ ...c, color: palette[i] ?? null }));
+    if (sorted.length <= 8) {
+      return sorted.map((c, i) => ({ ...c, color: palette[i] ?? chartOtherColor, isOther: false }));
+    }
+    const top = sorted.slice(0, 7).map((c, i) => ({ ...c, color: palette[i] ?? chartOtherColor, isOther: false }));
     const rest = sorted.slice(7).reduce((acc, c) => acc + c.amount, 0);
-    return [...top, { category: 'OTHER' as const, amount: rest, color: null }];
+    return [...top, { category: 'OTHER' as const, amount: rest, color: chartOtherColor, isOther: true }];
   }, [data, palette]);
   const maxCategory = categories.reduce((acc, c) => Math.max(acc, c.amount), 0);
 
@@ -186,30 +170,36 @@ export default function AnalyticsScreen() {
               </View>
             ) : null}
 
-            {/* Hero tiles */}
+            {/* Hero tiles — WI-068 §9.2: value counts up via MoneyText on
+                range change (period switch re-fetches `data`, so the figure
+                animates from the previous period's total to the new one). */}
             <View style={styles.tileRow}>
               <Card style={styles.tile}>
                 <Text style={[styles.tileLabel, { color: colors.ink2 }]}>Your spend</Text>
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  style={[styles.tileValue, { color: colors.ink }]}
-                >
-                  {formatMoney(data.yourSpend, data.currency)}
-                </Text>
+                <MoneyText
+                  amount={data.yourSpend}
+                  currency={data.currency}
+                  colored={false}
+                  animate
+                  size={28}
+                  weight="600"
+                  style={styles.tileValue}
+                />
                 {delta ? (
                   <Text style={[styles.tileDelta, { color: delta.color }]}>{delta.text}</Text>
                 ) : null}
               </Card>
               <Card style={styles.tile}>
                 <Text style={[styles.tileLabel, { color: colors.ink2 }]}>Total activity</Text>
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  style={[styles.tileValue, { color: colors.ink }]}
-                >
-                  {formatMoney(data.totalActivity, data.currency)}
-                </Text>
+                <MoneyText
+                  amount={data.totalActivity}
+                  currency={data.currency}
+                  colored={false}
+                  animate
+                  size={28}
+                  weight="600"
+                  style={styles.tileValue}
+                />
                 <Text style={[styles.tileDelta, { color: colors.ink3 }]}>
                   everything you were part of
                 </Text>
@@ -218,15 +208,25 @@ export default function AnalyticsScreen() {
 
             {/* Monthly bars */}
             <Card>
+              <SegmentedControl
+                options={[
+                  { value: 'you', label: 'You' },
+                  { value: 'total', label: 'Total' },
+                ]}
+                value={series}
+                onChange={setSeries}
+                style={styles.seriesToggle}
+              />
               <Text style={[styles.chartTitle, { color: colors.ink }]}>
-                Your spend by month
+                {series === 'you' ? 'Your spend by month' : 'Total activity by month'}
               </Text>
               <View style={styles.barArea}>
                 {months.map((item, index) => {
                   const active = index === activeIndex;
+                  const value = monthlySeriesValue(item, series);
                   const height =
-                    maxMonth > 0 && item.amount > 0
-                      ? Math.max(4, Math.round((item.amount / maxMonth) * BAR_AREA_HEIGHT))
+                    maxMonth > 0 && value > 0
+                      ? Math.max(4, Math.round((value / maxMonth) * BAR_AREA_HEIGHT))
                       : 2;
                   const date = monthDate(item.month);
                   const initial = date ? format(date, 'MMM').charAt(0) : item.month.slice(5);
@@ -235,7 +235,7 @@ export default function AnalyticsScreen() {
                     <Pressable
                       key={item.month}
                       accessibilityRole="button"
-                      accessibilityLabel={`${fullLabel}: ${formatMoney(item.amount, data.currency)}`}
+                      accessibilityLabel={`${fullLabel}: ${formatMoney(value, data.currency)}`}
                       onPress={() => {
                         Haptics.selectionAsync().catch(() => undefined);
                         setActiveBar(index);
@@ -247,7 +247,7 @@ export default function AnalyticsScreen() {
                           numberOfLines={1}
                           style={[styles.barValue, { color: colors.ink }]}
                         >
-                          {formatMoney(item.amount, data.currency)}
+                          {formatMoney(value, data.currency)}
                         </Text>
                       ) : (
                         <View style={styles.barValuePlaceholder} />
@@ -258,11 +258,13 @@ export default function AnalyticsScreen() {
                             styles.bar,
                             {
                               height,
+                              // WI-068 §8.2 AC-9b — single-series marks
+                              // consume chart1, not brand.
                               backgroundColor:
-                                item.amount > 0
+                                value > 0
                                   ? active
-                                    ? colors.brand
-                                    : withAlpha(colors.brand, 0.55)
+                                    ? colors.chart1
+                                    : withAlpha(colors.chart1, 0.55)
                                   : colors.surface2,
                             },
                           ]}
@@ -288,12 +290,14 @@ export default function AnalyticsScreen() {
               <Card>
                 <Text style={[styles.chartTitle, { color: colors.ink }]}>By category</Text>
                 <View style={styles.rowsBlock}>
-                  {categories.map((row) => {
+                  {categories.map((row, index) => {
                     const info = categoryInfo(row.category);
                     const ratio = maxCategory > 0 ? row.amount / maxCategory : 0;
-                    const barColor = row.color ?? colors.ink3;
                     return (
-                      <View key={`${row.category}-${row.color ?? 'other'}`} style={styles.catRow}>
+                      <View
+                        key={`${row.category}-${row.isOther ? 'other' : index}`}
+                        style={styles.catRow}
+                      >
                         <Text style={styles.catEmoji}>{info.emoji}</Text>
                         <View style={styles.catBody}>
                           <View style={styles.catTopLine}>
@@ -301,9 +305,7 @@ export default function AnalyticsScreen() {
                               numberOfLines={1}
                               style={[styles.catName, { color: colors.ink }]}
                             >
-                              {row.color === null && row.category === 'OTHER'
-                                ? 'Other'
-                                : info.label}
+                              {info.label}
                             </Text>
                             <Text style={[styles.catAmount, { color: colors.ink }]}>
                               {formatMoney(row.amount, data.currency)}
@@ -316,7 +318,10 @@ export default function AnalyticsScreen() {
                               style={[
                                 styles.catBar,
                                 {
-                                  backgroundColor: barColor,
+                                  // WI-068 §8.1 — the validated categorical
+                                  // order/hue (relief rule: paired with the
+                                  // visible label + value above).
+                                  backgroundColor: row.color,
                                   width: `${Math.max(2, Math.round(ratio * 100))}%`,
                                 },
                               ]}
@@ -359,7 +364,9 @@ export default function AnalyticsScreen() {
                               style={[
                                 styles.catBar,
                                 {
-                                  backgroundColor: withAlpha(colors.brand, 0.7),
+                                  // WI-068 §8.2 AC-9b — one metric per group
+                                  // (single-series), chart1 not brand.
+                                  backgroundColor: withAlpha(colors.chart1, 0.7),
                                   width: `${Math.max(2, Math.round(ratio * 100))}%`,
                                 },
                               ]}
@@ -428,9 +435,6 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
   },
   tileValue: {
-    fontSize: 28,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
     marginTop: spacing.xs,
   },
   tileDelta: {
@@ -454,6 +458,9 @@ const styles = StyleSheet.create({
   chartTitle: {
     fontSize: fontSize.md,
     fontWeight: '600',
+    marginBottom: spacing.md,
+  },
+  seriesToggle: {
     marginBottom: spacing.md,
   },
   barArea: {

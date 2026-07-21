@@ -2,15 +2,17 @@
 
 import { useState } from 'react';
 import { ChevronRight, HandCoins, MoveRight, RefreshCw } from 'lucide-react';
-import { formatMoney, type PublicUserDto } from '@divzy/shared';
-import { errorMessage, useGroupBalances } from '@/lib/hooks';
+import { formatMoney, type CurrencyAmount, type PublicUserDto } from '@divzy/shared';
+import { errorMessage, useGroup, useGroupBalances, useUpdateGroup } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth-store';
 import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { FallbackRatesNotice } from '@/components/ui/fallback-rates-notice';
 import { MoneyText } from '@/components/ui/money-text';
 import { SkeletonList } from '@/components/ui/skeleton';
+import { ManualRatePrompts } from '@/components/settle/manual-rate-prompt';
 import { SettleUpDialog, type SettleUpPrefill } from '@/components/settle/settle-dialog';
 
 export interface BalancesViewProps {
@@ -24,6 +26,54 @@ function netPhrase(amount: number, currency: string, isMe: boolean): string {
   return isMe ? `you owe ${money}` : `owes ${money}`;
 }
 
+/** First occurrence per currency — used to feed the shared manual-rate prompt one entry per pair. */
+function dedupeByCurrency(entries: CurrencyAmount[]): CurrencyAmount[] {
+  const seen = new Map<string, CurrencyAmount>();
+  for (const entry of entries) {
+    if (!seen.has(entry.currency)) seen.set(entry.currency, entry);
+  }
+  return [...seen.values()];
+}
+
+/** "1 payment" / "3 payments" — never a bare, possibly-plural-wrong count. */
+function paymentCount(n: number): string {
+  return `${n} payment${n === 1 ? '' : 's'}`;
+}
+
+interface ToggleProps {
+  id?: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+}
+
+/** WI-013 — small controlled switch, styled to match GroupFormDialog's toggle. */
+function Toggle({ id, checked, onChange, disabled }: ToggleProps) {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        'relative h-6 w-10 shrink-0 rounded-full transition-colors',
+        checked ? 'bg-brand' : 'bg-surface-2 ring-1 ring-inset ring-hairline',
+        disabled && 'cursor-not-allowed opacity-55',
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          'absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform',
+          checked && 'translate-x-4',
+        )}
+      />
+    </button>
+  );
+}
+
 /**
  * Group balances tab: per-member nets, suggested settlements with one-tap
  * "Record payment", and an expandable exact (pairwise) debt list.
@@ -31,8 +81,15 @@ function netPhrase(amount: number, currency: string, isMe: boolean): string {
 export function BalancesView({ groupId }: BalancesViewProps) {
   const { user: me } = useAuth();
   const balances = useGroupBalances(groupId);
+  const group = useGroup(groupId);
+  const updateGroup = useUpdateGroup();
   const [showExact, setShowExact] = useState(false);
   const [settle, setSettle] = useState<{ prefill?: SettleUpPrefill } | null>(null);
+  // WI-013: optimistic local override of the persisted Group.simplifyDebts —
+  // null means "use the persisted value"; set on toggle, cleared on
+  // success/error (reverting to the — possibly re-fetched — persisted value).
+  const [simplifyOverride, setSimplifyOverride] = useState<boolean | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
   if (balances.isLoading) {
     return <SkeletonList rows={4} />;
@@ -53,6 +110,40 @@ export function BalancesView({ groupId }: BalancesViewProps) {
   const data = balances.data;
   if (!data) return null;
 
+  // WI-013: source of truth is the persisted Group.simplifyDebts, with an
+  // optimistic local override while a toggle PATCH is in flight/pending
+  // settling (cleared on both success and error — the error path also
+  // reverts by definition, since it restores the persisted value).
+  const persistedSimplify = group.data?.simplifyDebts ?? true;
+  const simplifyDebts = simplifyOverride ?? persistedSimplify;
+
+  const handleToggleSimplify = (next: boolean) => {
+    setToggleError(null);
+    setSimplifyOverride(next);
+    updateGroup.mutate(
+      { groupId, input: { simplifyDebts: next } },
+      {
+        onSuccess: () => setSimplifyOverride(null),
+        onError: (error) => {
+          setSimplifyOverride(null);
+          setToggleError(errorMessage(error));
+        },
+      },
+    );
+  };
+
+  // WI-013: before/after payment-count comparison — always both counts
+  // (never implies a false saving when already-minimal), currency-agnostic
+  // (pairwise/suggestions already flatten across currencies), omitted only
+  // when the group is fully settled (both 0).
+  const beforeCount = data.pairwise.length;
+  const afterCount = data.suggestions.length;
+  const showComparison = beforeCount > 0 || afterCount > 0;
+
+  // ON -> the simplified suggestions (today's behavior); OFF -> the exact,
+  // unsimplified pairwise debts, each independently actionable (WI-013).
+  const actionable = simplifyDebts ? data.suggestions : data.pairwise;
+
   // Show the requesting user first; everyone else in API order.
   const members = [...data.members].sort((a, b) => {
     if (me) {
@@ -65,11 +156,19 @@ export function BalancesView({ groupId }: BalancesViewProps) {
   const displayName = (user: PublicUserDto): string =>
     me && user.id === me.id ? 'You' : user.name;
 
+  // WI-002: every member's unresolved native currency, deduped, feeds one
+  // shared manual-rate prompt for this whole balances view.
+  const unresolved = dedupeByCurrency(
+    data.members.flatMap((m) => m.convertedNet?.unresolved ?? []),
+  );
+
   return (
     <div className="space-y-6">
-      {/* Per-member nets */}
+      {data.usedFallbackRates && <FallbackRatesNotice />}
+
+      {/* Per-member nets — collapsed to one converted figure (WI-001) */}
       <Card className="divide-y divide-hairline">
-        {members.map(({ user, balances: nets }) => {
+        {members.map(({ user, balances: nets, convertedNet }) => {
           const isMe = me?.id === user.id;
           const settled = nets.length === 0;
           return (
@@ -83,12 +182,28 @@ export function BalancesView({ groupId }: BalancesViewProps) {
                 <p className="truncate text-[13px] text-ink-3">
                   {settled
                     ? 'settled up'
-                    : nets.map((n) => netPhrase(n.amount, n.currency, isMe)).join(' · ')}
+                    : convertedNet
+                      ? netPhrase(convertedNet.amount, data.viewerCurrency, isMe)
+                      : nets.map((n) => netPhrase(n.amount, n.currency, isMe)).join(' · ')}
                 </p>
+                {convertedNet && convertedNet.unresolved.length > 0 && (
+                  <p className="truncate text-[12px] text-warn">
+                    {convertedNet.unresolved
+                      .map((u) => `${formatMoney(Math.abs(u.amount), u.currency)} unconverted`)
+                      .join(' · ')}
+                  </p>
+                )}
               </div>
               <div className="flex shrink-0 flex-col items-end gap-0.5">
                 {settled ? (
                   <span className="text-sm text-ink-3">—</span>
+                ) : convertedNet ? (
+                  <MoneyText
+                    amount={convertedNet.amount}
+                    currency={data.viewerCurrency}
+                    mode="signed-color"
+                    className="text-sm"
+                  />
                 ) : (
                   nets.map((n) => (
                     <MoneyText
@@ -106,17 +221,49 @@ export function BalancesView({ groupId }: BalancesViewProps) {
         })}
       </Card>
 
-      {/* Suggested settlements */}
+      {/* Suggested settlements (ON) / exact debts as incurred (OFF) — WI-013 */}
       <div className="space-y-2.5">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold text-ink">Suggested settlements</h3>
-          <Button variant="ghost" size="sm" onClick={() => setSettle({})}>
-            <HandCoins className="h-4 w-4" aria-hidden="true" />
-            Record a payment
-          </Button>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-ink">
+              {simplifyDebts ? 'Suggested settlements' : 'Debts as incurred'}
+            </h3>
+            {showComparison && (
+              <span
+                data-testid="payment-count-comparison"
+                className="text-[12px] text-ink-3"
+              >
+                {paymentCount(beforeCount)} → {paymentCount(afterCount)}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <label
+              htmlFor="simplify-debts-toggle"
+              className="flex items-center gap-2 text-[13px] text-ink-2"
+            >
+              Simplify debts
+              <Toggle
+                id="simplify-debts-toggle"
+                checked={simplifyDebts}
+                onChange={handleToggleSimplify}
+                disabled={updateGroup.isPending}
+              />
+            </label>
+            <Button variant="ghost" size="sm" onClick={() => setSettle({})}>
+              <HandCoins className="h-4 w-4" aria-hidden="true" />
+              Record a payment
+            </Button>
+          </div>
         </div>
 
-        {data.suggestions.length === 0 ? (
+        {toggleError && (
+          <p className="text-[13px] text-danger" role="alert">
+            {toggleError}
+          </p>
+        )}
+
+        {actionable.length === 0 ? (
           <Card className="p-6 text-center">
             <div className="text-2xl" aria-hidden="true">
               ✅
@@ -126,49 +273,57 @@ export function BalancesView({ groupId }: BalancesViewProps) {
           </Card>
         ) : (
           <div className="space-y-2">
-            {data.suggestions.map((s) => (
-              <Card
-                key={`${s.currency}-${s.fromUserId}-${s.toUserId}`}
-                className="flex flex-wrap items-center gap-x-3 gap-y-2 p-4"
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <Avatar user={s.from} size="sm" />
-                  <span className="truncate text-sm font-medium text-ink">
-                    {displayName(s.from)}
+            {actionable.map((row) => {
+              // WI-004: disable (not hide, per ADR-004) for rows the current
+              // user isn't a party to — the server already 403s a direct API
+              // bypass; this only stops the dead-end click. Reused as-is for
+              // the unsimplified pairwise list (WI-013).
+              const canRecord = me?.id === row.fromUserId || me?.id === row.toUserId;
+              return (
+                <Card
+                  key={`${row.currency}-${row.fromUserId}-${row.toUserId}`}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-2 p-4"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Avatar user={row.from} size="sm" />
+                    <span className="truncate text-sm font-medium text-ink">
+                      {displayName(row.from)}
+                    </span>
                   </span>
-                </span>
-                <MoveRight className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
-                <span className="flex min-w-0 items-center gap-2">
-                  <Avatar user={s.to} size="sm" />
-                  <span className="truncate text-sm font-medium text-ink">
-                    {displayName(s.to)}
+                  <MoveRight className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Avatar user={row.to} size="sm" />
+                    <span className="truncate text-sm font-medium text-ink">
+                      {displayName(row.to)}
+                    </span>
                   </span>
-                </span>
-                <span className="ml-auto flex items-center gap-3">
-                  <MoneyText
-                    amount={s.amount}
-                    currency={s.currency}
-                    className="text-sm font-semibold"
-                  />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      setSettle({
-                        prefill: {
-                          fromUserId: s.fromUserId,
-                          toUserId: s.toUserId,
-                          amount: s.amount,
-                          currency: s.currency,
-                        },
-                      })
-                    }
-                  >
-                    Record payment
-                  </Button>
-                </span>
-              </Card>
-            ))}
+                  <span className="ml-auto flex items-center gap-3">
+                    <MoneyText
+                      amount={row.amount}
+                      currency={row.currency}
+                      className="text-sm font-semibold"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!canRecord}
+                      onClick={() =>
+                        setSettle({
+                          prefill: {
+                            fromUserId: row.fromUserId,
+                            toUserId: row.toUserId,
+                            amount: row.amount,
+                            currency: row.currency,
+                          },
+                        })
+                      }
+                    >
+                      Record payment
+                    </Button>
+                  </span>
+                </Card>
+              );
+            })}
           </div>
         )}
       </div>
@@ -200,11 +355,21 @@ export function BalancesView({ groupId }: BalancesViewProps) {
                     {' owes '}
                     <span className="font-medium text-ink">{displayName(d.to)}</span>
                   </p>
-                  <MoneyText
-                    amount={d.amount}
-                    currency={d.currency}
-                    className="shrink-0 text-[13px] text-ink-2"
-                  />
+                  <span className="flex shrink-0 items-center gap-2">
+                    <MoneyText
+                      amount={d.amount}
+                      currency={d.currency}
+                      className="text-[13px] text-ink-2"
+                    />
+                    {/* Converted equivalent (WI-001) — omitted, not zeroed, when
+                        this row's currency has no resolvable rate to viewerCurrency. */}
+                    {d.convertedAmount !== undefined && (
+                      <span className="flex items-center gap-1 text-[12px] text-ink-3">
+                        <span aria-hidden="true">≈</span>
+                        <MoneyText amount={d.convertedAmount} currency={data.viewerCurrency} />
+                      </span>
+                    )}
+                  </span>
                 </div>
               ))}
             </Card>
@@ -222,6 +387,12 @@ export function BalancesView({ groupId }: BalancesViewProps) {
           prefill={settle.prefill}
         />
       )}
+
+      <ManualRatePrompts
+        unresolved={unresolved}
+        viewerCurrency={data.viewerCurrency}
+        onResolved={() => void balances.refetch()}
+      />
     </div>
   );
 }

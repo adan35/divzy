@@ -13,7 +13,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
+import QRCode from 'react-native-qrcode-svg';
 import {
   formatMoney,
   LIMITS,
@@ -27,11 +29,33 @@ import {
   Button,
   CurrencyPicker,
   Input,
+  PressableScale,
   Skeleton,
+  Toast,
 } from '@/components/ui';
 import { DateField, InlineError, ModalHeader } from '@/components/expense-editor';
+import { ProofPicker } from '@/components/settle/ProofPicker';
 import { useAuth } from '@/lib/auth';
-import { errorMessage, useCreateSettlement, useFriends, useGroup } from '@/lib/hooks';
+import { WEB_BASE_URL } from '@/lib/api';
+import { celebrate } from '@/lib/celebration';
+import {
+  errorMessage,
+  useCreateSettlement,
+  useFriends,
+  useGroup,
+  useGroupBalances,
+} from '@/lib/hooks';
+import {
+  findDirectionalDebt,
+  friendDirectionalDebts,
+  friendHasNothingOutstanding,
+  netReachableAmount,
+  resolveSettleParties,
+  settleCounterpartyId,
+  withProofUrl,
+} from '@/lib/settlements';
+import { buildSettleShareLink, copySettleShareLink } from '@/lib/settleShareLink';
+import { nextToastTriggerId, type ToastTone } from '@/lib/toast';
 import { fontSize, radii, spacing, useTheme, withAlpha } from '@/theme';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
@@ -68,20 +92,22 @@ function PartyField({
   return (
     <View style={styles.partyField}>
       <Text style={[styles.fieldLabel, { color: colors.ink2 }]}>{label}</Text>
-      <Pressable
-        accessibilityRole="button"
+      {/* spec-WI-068 §9.2 — party cards get PressableScale (transform-only
+          press feedback); the fixed surface background replaces the old
+          pressed-tint toggle, since PressableScale.style can't be the
+          `({pressed}) => …` function form (the scale IS the affordance). */}
+      <PressableScale
         accessibilityLabel={`${label}: ${selected ? (selected.id === meId ? 'You' : selected.name) : 'choose a person'}`}
         onPress={() => setOpen(true)}
-        style={({ pressed }) => [
-          styles.partyButton,
-          {
-            backgroundColor: pressed ? colors.surface2 : colors.surface,
-            borderColor: colors.hairline,
-          },
-        ]}
+        style={[styles.partyButton, { backgroundColor: colors.surface, borderColor: colors.hairline }]}
       >
         {selected ? (
-          <Avatar name={selected.name} color={selected.avatarColor} size={24} />
+          <Avatar
+            name={selected.name}
+            color={selected.avatarColor}
+            avatarUrl={selected.avatarUrl}
+            size={24}
+          />
         ) : (
           <Ionicons name="person-circle-outline" size={24} color={colors.ink3} />
         )}
@@ -89,7 +115,7 @@ function PartyField({
           {selected ? (selected.id === meId ? 'You' : selected.name) : 'Choose…'}
         </Text>
         <Ionicons name="chevron-down" size={16} color={colors.ink3} />
-      </Pressable>
+      </PressableScale>
 
       <Modal
         visible={open}
@@ -135,7 +161,12 @@ function PartyField({
                   pressed && { backgroundColor: colors.surface2 },
                 ]}
               >
-                <Avatar name={item.name} color={item.avatarColor} size={36} />
+                <Avatar
+                  name={item.name}
+                  color={item.avatarColor}
+                  avatarUrl={item.avatarUrl}
+                  size={36}
+                />
                 <Text numberOfLines={1} style={[styles.modalRowName, { color: colors.ink }]}>
                   {item.name}
                   {item.id === meId ? <Text style={{ color: colors.ink3 }}> (you)</Text> : null}
@@ -188,13 +219,18 @@ export default function SettleUpScreen() {
   const groupQuery = useGroup(groupId ?? '', !!groupId);
   const friendsQuery = useFriends();
   const createSettlement = useCreateSettlement();
+  // WI-012 — group-scoped entry points' pre-submit clamp source (native
+  // pairwise amount/currency only; never `convertedAmount`, ARCH invariant 5).
+  const groupBalancesQuery = useGroupBalances(groupId ?? '', !!groupId);
 
   const group = groupId ? groupQuery.data : undefined;
 
   const candidates = useMemo<PublicUserDto[]>(() => {
     if (groupId) return group?.members.map((m) => m.user) ?? [];
     const list: PublicUserDto[] = [];
-    if (me) list.push({ id: me.id, name: me.name, avatarColor: me.avatarColor });
+    if (me) {
+      list.push({ id: me.id, name: me.name, avatarColor: me.avatarColor, avatarUrl: me.avatarUrl });
+    }
     for (const f of friendsQuery.data ?? []) list.push(f.user);
     return list;
   }, [groupId, group, me, friendsQuery.data]);
@@ -209,18 +245,41 @@ export default function SettleUpScreen() {
   const [method, setMethod] = useState<SettlementMethod>('CASH');
   const [note, setNote] = useState('');
   const [date, setDate] = useState(defaultDateIso());
+  // WI-023 — optional payment-proof attachment (spec-WI-023 §6): two-step,
+  // upload-then-create, identical to the expense editor's ReceiptPicker flow.
+  const [proofUrl, setProofUrl] = useState<string | null>(null);
 
-  // Fill blanks once async data (group members / friends) arrives.
-  useEffect(() => {
-    if (candidates.length === 0) return;
-    setFromUserId((prev) => (prev === '' && me ? me.id : prev));
-    setToUserId((prev) => {
-      if (prev !== '') return prev;
-      const firstOther = candidates.find((c) => c.id !== (fromUserId || me?.id));
-      return firstOther?.id ?? prev;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to data arrival only
-  }, [candidates.length, me?.id]);
+  // WI-016 §B — Share affordance (QR + copy-link). Toast state mirrors the
+  // existing group/[id].tsx GroupMenu copy-link pattern.
+  const [shareOpen, setShareOpen] = useState(false);
+  const [toast, setToast] = useState<{ message: string; tone: ToastTone; id: number } | null>(
+    null,
+  );
+  const toastSeq = useRef(0);
+  const showToast = (message: string, tone: ToastTone) => {
+    toastSeq.current = nextToastTriggerId(toastSeq.current);
+    setToast({ message, tone, id: toastSeq.current });
+  };
+
+  // WI-024 / ADR-021 — resolve the effective parties as pure derived values
+  // every render, instead of the deleted "fill blanks once async data
+  // arrives" effect (its `firstOther` computation read `fromUserId` through a
+  // stale closure omitted from its deps — the same defect class as the web
+  // dialog's, and the WI-021 mid-interaction overwrite on this screen).
+  // `fromUserId`/`toUserId` remain the user's explicit override (empty string
+  // means "not overridden"); `resolveSettleParties` derives the effective
+  // default from prefill/route params + `me` + whatever `candidates` currently
+  // holds, so it is correct on first render, once async data arrives, and
+  // after any manual override — with no stale window and nothing to skip or
+  // clobber.
+  const { resolvedFrom, resolvedTo } = resolveSettleParties(
+    fromUserId,
+    toUserId,
+    me?.id,
+    prefillFrom,
+    prefillTo ?? friendId,
+    candidates,
+  );
 
   // Adopt the group currency when the group loads late (unless already chosen).
   useEffect(() => {
@@ -233,44 +292,134 @@ export default function SettleUpScreen() {
     return candidates.find((c) => c.id === userId)?.name ?? 'someone';
   };
 
-  const partiesDiffer = fromUserId !== '' && toUserId !== '' && fromUserId !== toUserId;
-  const meInvolved = !!me && (fromUserId === me.id || toUserId === me.id);
+  const partiesDiffer =
+    resolvedFrom !== '' && resolvedTo !== '' && resolvedFrom !== resolvedTo;
+  const meInvolved = !!me && (resolvedFrom === me.id || resolvedTo === me.id);
   const amountValid = amount !== null && amount > 0;
+  const partiesResolved = partiesDiffer && meInvolved;
 
   const validationError =
-    fromUserId && toUserId && !partiesDiffer
+    resolvedFrom && resolvedTo && !partiesDiffer
       ? 'The payer and the recipient must be different people.'
-      : fromUserId && toUserId && !meInvolved
+      : resolvedFrom && resolvedTo && !meInvolved
         ? 'You must be one of the two people in this payment.'
         : null;
 
+  // ---------------------------------------------------------------------
+  // WI-012 — bound "Record a payment" to the real outstanding balance.
+  // Group-scoped (Revision 2, cycle 1 — defect-WI-012.md; ADR-010): full
+  // pre-submit clamp off a net-position reachability ceiling
+  // (`netReachableAmount`, sourced from useGroupBalances().members[].balances
+  // — native per-currency nets, never convertedNet — ARCH invariant 5). This
+  // replaced the original bilateral `data.pairwise` lookup, which incorrectly
+  // rejected min-cash-flow `suggestSettlements` transfers in 3+-member debt
+  // chains (the suggested pair can have no bilateral pairwise entry at all).
+  // Non-group (friend detail / dashboard quick action, no groupId): a
+  // zero-balance disable off the matching FriendDto, plus the same clamp
+  // shape only when there's exactly one native leftover currency to clamp
+  // against unambiguously; otherwise this falls through to the server's 400
+  // surfaced inline at submit (createSettlement.isError below) — matching
+  // spec-WI-012's "block-at-submit" allowance for that common same-currency
+  // case. Either way, this client gate is affordance only, never the
+  // enforcement point (the server re-derives and enforces the real bound;
+  // for the group scope it now also uses this same net-reachability rule).
+  // ---------------------------------------------------------------------
+  const otherId = partiesResolved ? settleCounterpartyId(resolvedFrom, resolvedTo, me?.id ?? '') : null;
+  const friend =
+    !groupId && otherId ? friendsQuery.data?.find((f) => f.user.id === otherId) : undefined;
+  const nonGroupLeftovers = friend?.balances.filter((b) => b.amount !== 0) ?? [];
+  const nonGroupDebts =
+    !groupId && otherId && nonGroupLeftovers.length === 1
+      ? friendDirectionalDebts(nonGroupLeftovers, me?.id ?? '', otherId)
+      : null;
+
+  // ADR-011 (WI-013) — widen the group-scoped clamp to max(netCeiling,
+  // bilateral), folding in the bilateral pairwise row for this pair/currency
+  // (from the same `useGroupBalances` query) so a genuinely-owed unsimplified
+  // debt opened from the Balances tab's "WHO OWES WHOM" list isn't wrongly
+  // clamped to zero by the net ceiling alone. Superset of the WI-012
+  // Revision 2 ceiling — every prior acceptance still passes.
+  const groupCeiling =
+    partiesResolved && groupId && groupBalancesQuery.data
+      ? netReachableAmount(
+          groupBalancesQuery.data.members,
+          resolvedFrom,
+          resolvedTo,
+          currency,
+          groupBalancesQuery.data.pairwise,
+        )
+      : null;
+
+  const nonGroupDebt =
+    partiesResolved && !groupId && nonGroupDebts
+      ? findDirectionalDebt(nonGroupDebts, resolvedFrom, resolvedTo, currency)
+      : undefined;
+
+  const balanceBlocked = partiesResolved
+    ? groupId
+      ? groupCeiling !== null && groupCeiling <= 0
+      : !!friend && friendHasNothingOutstanding(friend)
+    : false;
+  const owedCeiling = !balanceBlocked
+    ? groupId
+      ? groupCeiling
+      : (nonGroupDebt?.amount ?? null)
+    : null;
+  const overAmount = owedCeiling !== null && amount !== null && amount > owedCeiling;
+
+  const balanceMessage = balanceBlocked
+    ? `Nothing outstanding with ${otherId ? nameOf(otherId) : 'this person'}${groupId ? ' in this group' : ''}`
+    : overAmount && owedCeiling !== null
+      ? `Only ${formatMoney(owedCeiling, currency)} is outstanding`
+      : null;
+
   const canSave =
-    partiesDiffer && meInvolved && amountValid && !createSettlement.isPending;
+    partiesDiffer &&
+    meInvolved &&
+    amountValid &&
+    !balanceBlocked &&
+    !overAmount &&
+    !createSettlement.isPending;
 
   const swapParties = () => {
     Haptics.selectionAsync().catch(() => undefined);
-    setFromUserId(toUserId);
-    setToUserId(fromUserId);
+    setFromUserId(resolvedTo);
+    setToUserId(resolvedFrom);
   };
 
   const handleSave = () => {
     if (!canSave || amount === null) return;
     createSettlement.mutate(
-      {
-        groupId: groupId ?? null,
-        fromUserId,
-        toUserId,
-        amount,
-        currency,
-        method,
-        date,
-        ...(note.trim() ? { note: note.trim() } : {}),
-      },
+      // WI-023 — `withProofUrl` omits the key entirely when there's no
+      // attachment, so "creating with no attachment" stays byte-for-byte
+      // unchanged (spec-WI-023 AC). Cast: `proofUrl` isn't yet on
+      // `CreateSettlementInput` in @divzy/shared as of this build — see the
+      // dependency-gap note on `withProofUrl` (lib/settlements.ts) and the
+      // build summary. Remove the cast once the backend PR lands the field.
+      withProofUrl(
+        {
+          groupId: groupId ?? null,
+          fromUserId: resolvedFrom,
+          toUserId: resolvedTo,
+          amount,
+          currency,
+          method,
+          date,
+          ...(note.trim() ? { note: note.trim() } : {}),
+        },
+        proofUrl,
+      ) as Parameters<typeof createSettlement.mutate>[0],
       {
         onSuccess: () => {
+          // spec-WI-068 §7 — celebrate() BEFORE router.back(): the
+          // root-mounted CelebrationOverlay plays over the destination
+          // screen, so navigating away doesn't kill the burst. The existing
+          // success haptic is kept as the reduced-motion tactile channel
+          // (AC-7c) regardless of whether the visual plays.
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
             () => undefined,
           );
+          celebrate();
           router.back();
         },
       },
@@ -282,10 +431,41 @@ export default function SettleUpScreen() {
 
   const sentence =
     partiesDiffer && amountValid
-      ? `${fromUserId === me?.id ? 'You pay' : `${nameOf(fromUserId)} pays`} ${
-          toUserId === me?.id ? 'you' : nameOf(toUserId)
+      ? `${resolvedFrom === me?.id ? 'You pay' : `${nameOf(resolvedFrom)} pays`} ${
+          resolvedTo === me?.id ? 'you' : nameOf(resolvedTo)
         } ${formatMoney(amount!, currency)}`
       : null;
+
+  // WI-016 §B — once parties/amount/currency are resolved, the same
+  // non-secret prefill the suggestion/friend entry points already pass
+  // in-process can be shared as a Divzy link + client-side QR (ADR-013).
+  // No server call, no new gating — `POST /settlements` remains the sole
+  // authority; a non-party who opens this link still can't submit (WI-004,
+  // unchanged `canSave`/`meInvolved` above).
+  const shareLink =
+    partiesDiffer && amountValid
+      ? buildSettleShareLink(
+          {
+            fromUserId: resolvedFrom,
+            toUserId: resolvedTo,
+            amount: amount!,
+            currency,
+            groupId: groupId ?? null,
+          },
+          WEB_BASE_URL,
+        )
+      : null;
+
+  const copyShareLink = async () => {
+    if (!shareLink) return;
+    const result = await copySettleShareLink(shareLink, {
+      setClipboardText: Clipboard.setStringAsync,
+      notifySuccess: () =>
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success),
+      onError: (err) => console.warn('[settle] copy share link failed', err),
+    });
+    showToast(result.message, result.tone);
+  };
 
   return (
     <SafeAreaView
@@ -339,7 +519,7 @@ export default function SettleUpScreen() {
                 <PartyField
                   label="From (who paid)"
                   users={candidates}
-                  value={fromUserId}
+                  value={resolvedFrom}
                   meId={me?.id ?? ''}
                   onChange={setFromUserId}
                 />
@@ -358,7 +538,7 @@ export default function SettleUpScreen() {
                 <PartyField
                   label="To (who received)"
                   users={candidates}
-                  value={toUserId}
+                  value={resolvedTo}
                   meId={me?.id ?? ''}
                   onChange={setToUserId}
                 />
@@ -376,6 +556,7 @@ export default function SettleUpScreen() {
                   currency={currency}
                   value={amount}
                   onChange={setAmount}
+                  disabled={balanceBlocked}
                   containerStyle={styles.amountField}
                 />
                 <CurrencyPicker
@@ -388,6 +569,8 @@ export default function SettleUpScreen() {
                   containerStyle={styles.currencyField}
                 />
               </View>
+
+              {balanceMessage ? <InlineError message={balanceMessage} /> : null}
 
               <View>
                 <Text style={[styles.fieldLabel, { color: colors.ink2 }]}>Method</Text>
@@ -440,6 +623,8 @@ export default function SettleUpScreen() {
                 maxLength={LIMITS.NOTES_MAX}
               />
 
+              <ProofPicker value={proofUrl} onChange={setProofUrl} />
+
               <DateField value={date} onChange={setDate} />
 
               {sentence ? (
@@ -461,10 +646,55 @@ export default function SettleUpScreen() {
                 disabled={!canSave}
                 onPress={handleSave}
               />
+
+              {shareLink ? (
+                <View style={styles.shareSection}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={shareOpen ? 'Hide share link and QR code' : 'Share this payment as a link or QR code'}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => undefined);
+                      setShareOpen((prev) => !prev);
+                    }}
+                    style={({ pressed }) => [
+                      styles.shareToggle,
+                      { backgroundColor: pressed ? colors.surface2 : 'transparent' },
+                    ]}
+                  >
+                    <Ionicons name="qr-code-outline" size={18} color={colors.brand} />
+                    <Text style={[styles.shareToggleText, { color: colors.brand }]}>
+                      {shareOpen ? 'Hide share link' : 'Share'}
+                    </Text>
+                  </Pressable>
+
+                  {shareOpen ? (
+                    <View
+                      style={[
+                        styles.shareCard,
+                        { backgroundColor: colors.surface2, borderColor: colors.hairline },
+                      ]}
+                    >
+                      <View style={styles.qrWrap}>
+                        <QRCode value={shareLink} size={160} />
+                      </View>
+                      <Text numberOfLines={2} style={[styles.shareLinkText, { color: colors.ink3 }]}>
+                        {shareLink}
+                      </Text>
+                      <Button
+                        title="Copy link"
+                        variant="secondary"
+                        size="sm"
+                        onPress={() => void copyShareLink()}
+                      />
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
             </>
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+      {toast ? <Toast message={toast.message} tone={toast.tone} triggerId={toast.id} /> : null}
     </SafeAreaView>
   );
 }
@@ -565,6 +795,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
     gap: spacing.sm,
+  },
+  shareSection: {
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  shareToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.xs,
+  },
+  shareToggleText: {
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+  },
+  shareCard: {
+    width: '100%',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: radii.lg,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.md,
+    gap: spacing.md,
+  },
+  qrWrap: {
+    backgroundColor: '#fff',
+    padding: spacing.sm,
+    borderRadius: radii.md,
+  },
+  shareLinkText: {
+    fontSize: fontSize.sm,
+    textAlign: 'center',
   },
   sentenceText: {
     flex: 1,

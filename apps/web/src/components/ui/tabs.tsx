@@ -42,7 +42,7 @@ export function TabsList({ className, ...props }: HTMLAttributes<HTMLDivElement>
     <div
       role="tablist"
       className={cn(
-        'flex items-center gap-1 overflow-x-auto border-b border-hairline',
+        'flex items-center gap-1 overflow-x-auto overflow-y-hidden border-b border-hairline',
         className,
       )}
       {...props}

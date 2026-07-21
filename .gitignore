@@ -39,3 +39,14 @@ Thumbs.db
 *.ipa
 android/
 ios/
+
+# Claude Code local runtime state
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+**/agent-memory/
+.claude/agents/.claude/
+.claude/agents/memory/
+
+# Syncthing local sync metadata
+.stfolder/
+.stignore

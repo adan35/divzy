@@ -1,6 +1,6 @@
 'use client';
 
-import { formatMoney } from '@divzy/shared';
+import { MoneyText } from '@/components/ui/money-text';
 import { CHART_OTHER_COLOR } from './palette';
 
 export interface BreakdownRowDatum {
@@ -59,13 +59,15 @@ export function BreakdownRows({ rows, currency, palette }: BreakdownRowsProps) {
             </span>
             <span className="min-w-0 flex-1" aria-hidden="true">
               <span
-                className="block h-2 rounded-full transition-[width] duration-300"
+                className="block h-1.5 rounded-full transition-[width] duration-300"
                 style={{ width: `${widthPct}%`, backgroundColor: color }}
               />
             </span>
-            <span className="w-24 shrink-0 text-right text-sm tabular-nums text-ink">
-              {formatMoney(row.amount, currency)}
-            </span>
+            <MoneyText
+              amount={row.amount}
+              currency={currency}
+              className="w-24 shrink-0 text-right text-sm text-ink"
+            />
           </li>
         );
       })}

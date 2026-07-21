@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { FileText, Paperclip, StickyNote, X } from 'lucide-react';
+import { Check, ChevronDown, FileText, Paperclip, StickyNote, X } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   EXPENSE_CATEGORIES,
@@ -9,6 +9,8 @@ import {
   type CreateExpenseInput,
   type ExpenseCategory,
   type ExpenseDto,
+  type FriendDto,
+  type GroupSummaryDto,
   type PublicUserDto,
   type UpdateExpenseInput,
 } from '@divzy/shared';
@@ -22,6 +24,7 @@ import {
   useGroups,
   useUpdateExpense,
   useUploadReceipt,
+  useUsedCategories,
 } from '@/lib/hooks';
 import { AmountInput } from '@/components/ui/amount-input';
 import { Button } from '@/components/ui/button';
@@ -36,6 +39,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Field, Input } from '@/components/ui/input';
+import { SearchSelect } from '@/components/ui/search-select';
 import { SegmentedControl } from '@/components/ui/segmented';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -185,6 +189,25 @@ function ExpenseEditorForm({
   const [currency, setCurrency] = useState(expense?.currency ?? me?.defaultCurrency ?? 'USD');
   const currencyTouched = useRef(isEdit);
   const [category, setCategory] = useState<ExpenseCategory>(expense?.category ?? 'GENERAL');
+  // WI-032: narrow the category picker to categories this group actually
+  // uses, plus the current form value (D4/D5/D6/D7 — see spec-WI-032 §3).
+  const [showAllCategories, setShowAllCategories] = useState(false);
+  const usedCategoriesQuery = useUsedCategories({ groupId: ctxGroupId });
+  const usedCategorySet = useMemo(
+    () => new Set(usedCategoriesQuery.data?.categories ?? []),
+    [usedCategoriesQuery.data],
+  );
+  const narrowedCategories = useMemo(
+    () => EXPENSE_CATEGORIES.filter((c) => usedCategorySet.has(c.key) || c.key === category),
+    [usedCategorySet, category],
+  );
+  const showAllCategoryOptions =
+    !ctxGroupId ||
+    showAllCategories ||
+    usedCategoriesQuery.isLoading ||
+    usedCategoriesQuery.isError ||
+    usedCategorySet.size === 0;
+  const categoryOptions = showAllCategoryOptions ? EXPENSE_CATEGORIES : narrowedCategories;
   const [date, setDate] = useState(expense?.date ?? new Date().toISOString());
   const [notes, setNotes] = useState(expense?.notes ?? '');
   const [notesOpen, setNotesOpen] = useState(!!expense?.notes);
@@ -366,20 +389,40 @@ function ExpenseEditorForm({
                   with a friend instead.
                 </p>
               ) : (
-                <Select
-                  aria-label="Choose a group"
-                  value={pickedGroupId}
-                  onChange={(e) => setPickedGroupId(e.target.value)}
-                >
-                  <option value="" disabled>
-                    Choose a group…
-                  </option>
-                  {activeGroups.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.emoji} {g.name}
-                    </option>
-                  ))}
-                </Select>
+                <SearchSelect<GroupSummaryDto>
+                  key="group"
+                  items={activeGroups}
+                  value={pickedGroupId || null}
+                  onChange={setPickedGroupId}
+                  getKey={(g) => g.id}
+                  getSearchText={(g) => g.name}
+                  searchPlaceholder="Search groups…"
+                  searchAriaLabel="Search groups"
+                  emptyLabel="No groups found"
+                  listAriaLabel="Choose a group"
+                  renderTrigger={(selected) => (
+                    <>
+                      <span className="flex min-w-0 items-center gap-2">
+                        {selected ? (
+                          <>
+                            <span aria-hidden="true">{selected.emoji}</span>
+                            <span className="truncate font-medium">{selected.name}</span>
+                          </>
+                        ) : (
+                          <span className="text-ink-3">Choose a group…</span>
+                        )}
+                      </span>
+                      <ChevronDown className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+                    </>
+                  )}
+                  renderRow={(g, { selected }) => (
+                    <>
+                      <span aria-hidden="true">{g.emoji}</span>
+                      <span className="min-w-0 flex-1 truncate">{g.name}</span>
+                      {selected && <Check className="h-4 w-4 shrink-0 text-brand" aria-hidden="true" />}
+                    </>
+                  )}
+                />
               )
             ) : friendsQuery.isLoading ? (
               <Skeleton className="h-10 w-full" />
@@ -388,20 +431,36 @@ function ExpenseEditorForm({
                 You haven&rsquo;t added any friends yet — add one from the Friends page.
               </p>
             ) : (
-              <Select
-                aria-label="Choose a friend"
-                value={pickedFriendId}
-                onChange={(e) => setPickedFriendId(e.target.value)}
-              >
-                <option value="" disabled>
-                  Choose a friend…
-                </option>
-                {friends.map((f) => (
-                  <option key={f.user.id} value={f.user.id}>
-                    {f.user.name}
-                  </option>
-                ))}
-              </Select>
+              <SearchSelect<FriendDto>
+                key="friend"
+                items={friends}
+                value={pickedFriendId || null}
+                onChange={setPickedFriendId}
+                getKey={(f) => f.user.id}
+                getSearchText={(f) => f.user.name}
+                searchPlaceholder="Search friends…"
+                searchAriaLabel="Search friends"
+                emptyLabel="No friends found"
+                listAriaLabel="Choose a friend"
+                renderTrigger={(selected) => (
+                  <>
+                    <span className="flex min-w-0 items-center gap-2">
+                      {selected ? (
+                        <span className="truncate font-medium">{selected.user.name}</span>
+                      ) : (
+                        <span className="text-ink-3">Choose a friend…</span>
+                      )}
+                    </span>
+                    <ChevronDown className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+                  </>
+                )}
+                renderRow={(f, { selected }) => (
+                  <>
+                    <span className="min-w-0 flex-1 truncate">{f.user.name}</span>
+                    {selected && <Check className="h-4 w-4 shrink-0 text-brand" aria-hidden="true" />}
+                  </>
+                )}
+              />
             )}
           </div>
         )}
@@ -445,17 +504,28 @@ function ExpenseEditorForm({
           </Field>
           <Field label="Category">
             {(id) => (
-              <Select
-                id={id}
-                value={category}
-                onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
-              >
-                {EXPENSE_CATEGORIES.map((c) => (
-                  <option key={c.key} value={c.key}>
-                    {c.emoji} {c.label}
-                  </option>
-                ))}
-              </Select>
+              <div className="space-y-1">
+                <Select
+                  id={id}
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
+                >
+                  {categoryOptions.map((c) => (
+                    <option key={c.key} value={c.key}>
+                      {c.emoji} {c.label}
+                    </option>
+                  ))}
+                </Select>
+                {!showAllCategoryOptions && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllCategories(true)}
+                    className="text-[13px] font-medium text-brand transition-colors hover:text-brand-hover"
+                  >
+                    More categories
+                  </button>
+                )}
+              </div>
             )}
           </Field>
         </div>

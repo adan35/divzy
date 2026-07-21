@@ -1,11 +1,14 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { formatMoney, type CurrencyAmount, type GroupSummaryDto } from '@divzy/shared';
-import { Badge, Card } from '@/components/ui';
+import { Badge, Button, Card, PressableScale } from '@/components/ui';
+import { collapsedBalanceEntries } from '@/lib/convertedBalance';
 import { fontSize, radii, spacing, useTheme } from '@/theme';
 
 /**
- * One display line per currency of the caller's net position in a group.
- * Positive = owed to you (pos tone), negative = you owe (neg tone).
+ * One display line per entry of the caller's net position in a group.
+ * Positive = owed to you (pos tone), negative = you owe (neg tone). Callers
+ * pass the already-collapsed entries (`collapsedBalanceEntries`) so this
+ * only formats — it does not decide what converts (spec-WI-001).
  */
 export function netLines(
   balances: CurrencyAmount[],
@@ -27,20 +30,42 @@ export interface GroupCardProps {
   onPress: () => void;
   /** Compact fixed-width card for the Home horizontal preview strip. */
   compact?: boolean;
+  /**
+   * WI-027 — shown only on archived rows. Un-gated here (GroupSummaryDto
+   * carries no viewer-role field to check ADMIN client-side); the server's
+   * `assertAdmin` guard is authoritative and a non-admin's tap surfaces its
+   * 403 as a toast, same as any other action whose real enforcement is
+   * server-side.
+   */
+  onUnarchive?: () => void;
+  unarchiving?: boolean;
 }
 
-export function GroupCard({ group, onPress, compact = false }: GroupCardProps) {
+/**
+ * Used by both mobile group-list surfaces (`(tabs)/groups.tsx`'s full list
+ * and `(tabs)/index.tsx`'s Home preview strip). Per spec-WI-001:
+ * `yourBalanceConverted` (if any) collapses to the one converted line, then
+ * any `yourBalances` leftovers (currencies with no resolvable rate) render
+ * as additional native lines — mirrors web's `groups/page.tsx` GroupCard /
+ * `BalanceSentences` convention.
+ */
+export function GroupCard({
+  group,
+  onPress,
+  compact = false,
+  onUnarchive,
+  unarchiving = false,
+}: GroupCardProps) {
   const { colors } = useTheme();
-  const lines = netLines(group.yourBalances);
+  const entries = collapsedBalanceEntries(group.yourBalanceConverted, group.yourBalances);
+  const lines = netLines(entries);
   const archived = group.archivedAt !== null;
 
   if (compact) {
     return (
-      <Pressable
-        accessibilityRole="button"
+      <PressableScale
         accessibilityLabel={`Group ${group.name}`}
         onPress={onPress}
-        style={({ pressed }) => [pressed && styles.pressed]}
       >
         <Card style={styles.compactCard}>
           <Text style={styles.compactEmoji}>{group.emoji}</Text>
@@ -64,16 +89,14 @@ export function GroupCard({ group, onPress, compact = false }: GroupCardProps) {
             <Text style={[styles.compactBalance, { color: colors.ink3 }]}>Settled up</Text>
           )}
         </Card>
-      </Pressable>
+      </PressableScale>
     );
   }
 
   return (
-    <Pressable
-      accessibilityRole="button"
+    <PressableScale
       accessibilityLabel={`Group ${group.name}`}
       onPress={onPress}
-      style={({ pressed }) => [pressed && styles.pressed]}
     >
       <Card style={[styles.rowCard, archived && styles.archived]}>
         <View style={styles.row}>
@@ -86,10 +109,25 @@ export function GroupCard({ group, onPress, compact = false }: GroupCardProps) {
                 {group.name}
               </Text>
               {archived ? <Badge label="Archived" style={styles.archivedBadge} /> : null}
+              {/* WI-028 — group-wide settled categorization (all members net
+                  zero), independent of the archived state. */}
+              {group.settled ? (
+                <Badge label="Settled" tone="pos" style={styles.archivedBadge} />
+              ) : null}
             </View>
             <Text style={[styles.meta, { color: colors.ink3 }]}>
               {group.memberCount} {group.memberCount === 1 ? 'member' : 'members'}
             </Text>
+            {archived && onUnarchive ? (
+              <Button
+                title="Unarchive"
+                variant="secondary"
+                size="sm"
+                loading={unarchiving}
+                onPress={onUnarchive}
+                style={styles.unarchiveButton}
+              />
+            ) : null}
           </View>
           <View style={styles.balances}>
             {lines.length === 0 ? (
@@ -113,19 +151,21 @@ export function GroupCard({ group, onPress, compact = false }: GroupCardProps) {
                     +{lines.length - 2} more
                   </Text>
                 ) : null}
+                {group.usedFallbackRates ? (
+                  <Text style={[styles.fallback, { color: colors.warning }]} numberOfLines={1}>
+                    est. rate
+                  </Text>
+                ) : null}
               </>
             )}
           </View>
         </View>
       </Card>
-    </Pressable>
+    </PressableScale>
   );
 }
 
 const styles = StyleSheet.create({
-  pressed: {
-    opacity: 0.75,
-  },
   rowCard: {
     marginBottom: spacing.md,
   },
@@ -167,6 +207,10 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     marginTop: 1,
   },
+  unarchiveButton: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.sm,
+  },
   balances: {
     marginLeft: spacing.md,
     alignItems: 'flex-end',
@@ -178,6 +222,10 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   more: {
+    fontSize: fontSize.xs,
+    marginTop: 1,
+  },
+  fallback: {
     fontSize: fontSize.xs,
     marginTop: 1,
   },

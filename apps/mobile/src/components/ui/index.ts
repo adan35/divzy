@@ -15,7 +15,11 @@ export {
 export { Badge, type BadgeProps, type BadgeTone } from './Badge';
 export { AmountInput, type AmountInputProps } from './AmountInput';
 export { CurrencyPicker, type CurrencyPickerProps } from './CurrencyPicker';
+export { SearchPicker, type SearchPickerProps } from './SearchPicker';
 export { Stepper, type StepperProps } from './Stepper';
 export { FAB, type FABProps } from './FAB';
 export { SectionHeader, type SectionHeaderProps } from './SectionHeader';
 export { ErrorState, type ErrorStateProps } from './ErrorState';
+export { Toast, type ToastProps } from './Toast';
+export { PressableScale, type PressableScaleProps } from './PressableScale';
+export { CelebrationOverlay } from './CelebrationOverlay';

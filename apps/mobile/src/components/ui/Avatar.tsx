@@ -1,34 +1,70 @@
+import { useState } from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Image } from 'expo-image';
 import { fontSize, radii, useTheme } from '@/theme';
 import { initials } from '@/lib/format';
+import { apiUrl } from '@/lib/api';
+import { shouldShowAvatarImage } from '@/lib/avatar';
 
 export interface AvatarProps {
   name: string;
   /** user.avatarColor — falls back to brand. */
   color?: string;
+  /**
+   * WI-035. `user.avatarUrl` — relative `/uploads/avatars/<hex>.<ext>` path or
+   * null/undefined (no photo). Rendered as an image, falling back to the
+   * initials circle on a missing/failed load — never a broken-image icon.
+   */
+  avatarUrl?: string | null;
   size?: number;
   style?: StyleProp<ViewStyle>;
 }
 
-export function Avatar({ name, color, size = 40, style }: AvatarProps) {
+export function Avatar({ name, color, avatarUrl, size = 40, style }: AvatarProps) {
   const { colors } = useTheme();
+  // Tracks the specific URL that failed to load so a later change to a
+  // different avatarUrl (replace) automatically gets a fresh attempt.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const showImage = shouldShowAvatarImage(avatarUrl, failedUrl);
+
   return (
     <View
       style={[
         styles.circle,
-        { width: size, height: size, borderRadius: size / 2, backgroundColor: color ?? colors.brand },
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: color ?? colors.brand,
+          overflow: 'hidden',
+        },
         style,
       ]}
     >
-      <Text style={[styles.initials, { color: colors.onBrand, fontSize: Math.max(10, Math.round(size * 0.38)) }]}>
-        {initials(name)}
-      </Text>
+      {showImage ? (
+        <Image
+          source={{ uri: apiUrl(avatarUrl!) }}
+          style={{ width: size, height: size }}
+          contentFit="cover"
+          accessibilityLabel={`${name}'s avatar`}
+          onError={() => setFailedUrl(avatarUrl ?? null)}
+        />
+      ) : (
+        <Text
+          style={[
+            styles.initials,
+            { color: colors.onBrand, fontSize: Math.max(10, Math.round(size * 0.38)) },
+          ]}
+        >
+          {initials(name)}
+        </Text>
+      )}
     </View>
   );
 }
 
 export interface AvatarStackProps {
-  users: Array<{ id: string; name: string; avatarColor: string }>;
+  users: Array<{ id: string; name: string; avatarColor: string; avatarUrl?: string | null }>;
   size?: number;
   /** Avatars shown before folding the rest into a "+N" bubble. Default 4. */
   max?: number;
@@ -52,7 +88,7 @@ export function AvatarStack({ users, size = 28, max = 4, style }: AvatarStackPro
             index > 0 && { marginLeft: overlap },
           ]}
         >
-          <Avatar name={user.name} color={user.avatarColor} size={size} />
+          <Avatar name={user.name} color={user.avatarColor} avatarUrl={user.avatarUrl} size={size} />
         </View>
       ))}
       {overflow > 0 ? (

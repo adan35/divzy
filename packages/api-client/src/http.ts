@@ -54,12 +54,26 @@ export class HttpClient {
     return result as T;
   }
 
-  private async rawRequest(
+  /**
+   * Like request(), but for binary responses (e.g. PDF downloads) — reads the
+   * response body via response.blob() instead of decoding it as UTF-8
+   * text/JSON. Decoding binary content as text corrupts any bytes that are
+   * not valid UTF-8 (see defect-WI-018: a pdfkit-generated PDF's compressed
+   * FlateDecode streams were mangled into U+FFFD replacement characters by
+   * the text path). Error responses (JSON) are still decoded as text/JSON so
+   * ApiError messages remain readable.
+   */
+  async requestBlob(method: string, path: string, options: RequestOptions = {}): Promise<Blob> {
+    return this.rawBlobRequest(method, path, options);
+  }
+
+  /** Performs the fetch + 401 refresh-and-retry dance; returns the raw Response. */
+  private async performFetch(
     method: string,
     path: string,
     options: RequestOptions,
     isRetry = false,
-  ): Promise<unknown> {
+  ): Promise<Response> {
     const fetchFn = this.opts.fetchFn ?? fetch;
     const token = await this.opts.getAccessToken();
 
@@ -95,11 +109,22 @@ export class HttpClient {
           refreshed = false;
         }
         if (refreshed) {
-          return this.rawRequest(method, path, options, true);
+          return this.performFetch(method, path, options, true);
         }
       }
       await this.opts.onUnauthorized?.();
     }
+
+    return response;
+  }
+
+  private async rawRequest(
+    method: string,
+    path: string,
+    options: RequestOptions,
+    isRetry = false,
+  ): Promise<unknown> {
+    const response = await this.performFetch(method, path, options, isRetry);
 
     if (response.status === 204) return undefined;
 
@@ -109,17 +134,42 @@ export class HttpClient {
       : await response.text().catch(() => undefined);
 
     if (!response.ok) {
-      const message =
-        payload && typeof payload === 'object' && 'message' in payload
-          ? String((payload as { message: unknown }).message)
-          : `Request failed with status ${response.status}`;
-      const code =
-        payload && typeof payload === 'object' && 'code' in payload
-          ? String((payload as { code: unknown }).code)
-          : undefined;
-      throw new ApiError(response.status, message, code, payload);
+      throw this.toApiError(response, payload);
     }
 
     return payload;
+  }
+
+  private async rawBlobRequest(
+    method: string,
+    path: string,
+    options: RequestOptions,
+    isRetry = false,
+  ): Promise<Blob> {
+    const response = await this.performFetch(method, path, options, isRetry);
+
+    if (!response.ok) {
+      // Error responses are JSON/text, not binary — decode them the normal
+      // way so ApiError carries a readable message.
+      const contentType = response.headers.get('content-type') ?? '';
+      const payload = contentType.includes('application/json')
+        ? await response.json().catch(() => undefined)
+        : await response.text().catch(() => undefined);
+      throw this.toApiError(response, payload);
+    }
+
+    return response.blob();
+  }
+
+  private toApiError(response: Response, payload: unknown): ApiError {
+    const message =
+      payload && typeof payload === 'object' && 'message' in payload
+        ? String((payload as { message: unknown }).message)
+        : `Request failed with status ${response.status}`;
+    const code =
+      payload && typeof payload === 'object' && 'code' in payload
+        ? String((payload as { code: unknown }).code)
+        : undefined;
+    return new ApiError(response.status, message, code, payload);
   }
 }

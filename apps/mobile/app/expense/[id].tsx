@@ -24,18 +24,24 @@ import {
   type ExpenseDto,
   type ExpenseSplitDto,
 } from '@divzy/shared';
-import { Avatar, Badge, Button, Card, ErrorState, Skeleton, SkeletonList } from '@/components/ui';
+import {
+  Avatar,
+  Badge,
+  Button,
+  Card,
+  ErrorState,
+  MoneyText,
+  Skeleton,
+  SkeletonList,
+} from '@/components/ui';
+import { ExpenseSplitChart } from '@/components/analytics/ExpenseSplitChart';
 import { InlineError } from '@/components/expense-editor';
 import { apiUrl } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { formatDateFull, formatRelative } from '@/lib/format';
-import {
-  errorMessage,
-  useAddComment,
-  useComments,
-  useDeleteExpense,
-  useExpense,
-} from '@/lib/hooks';
+import { formatHistoryChangeLine, formatHistoryKindLine } from '@/lib/expenseHistoryCopy';
+import { errorMessage, useAddComment, useComments, useExpense, useExpenseHistory } from '@/lib/hooks';
+import { useExpenseActions } from '@/hooks/useExpenseActions';
 import { fontSize, radii, spacing, useTheme, withAlpha } from '@/theme';
 
 function firstParam(value: string | string[] | undefined): string {
@@ -79,8 +85,13 @@ export default function ExpenseDetailScreen() {
 
   const expenseQuery = useExpense(expenseId, expenseId.length > 0);
   const commentsQuery = useComments(expenseId, expenseId.length > 0);
+  const historyQuery = useExpenseHistory(expenseId, expenseId.length > 0);
   const addComment = useAddComment();
-  const deleteExpense = useDeleteExpense();
+  const { editExpense, confirmDelete, isDeleting, restoreExpense, isRestoring } =
+    useExpenseActions(expenseId, {
+      onDeleted: () => router.back(),
+      // WI-054b — the now-active expense stays on screen; no back navigation.
+    });
   const [commentText, setCommentText] = useState('');
 
   const expense = expenseQuery.data;
@@ -88,34 +99,6 @@ export default function ExpenseDetailScreen() {
 
   const nameOf = (userId: string, fallback: string): string =>
     me && userId === me.id ? 'You' : fallback;
-
-  const confirmDelete = () => {
-    if (!expense) return;
-    Alert.alert(
-      'Delete expense?',
-      `“${expense.description}” will be removed from everyone's balances.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () =>
-            deleteExpense.mutate(
-              { expenseId: expense.id, groupId: expense.groupId },
-              {
-                onSuccess: () => {
-                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
-                    () => undefined,
-                  );
-                  router.back();
-                },
-                onError: (err) => Alert.alert('Could not delete', errorMessage(err)),
-              },
-            ),
-        },
-      ],
-    );
-  };
 
   const submitComment = () => {
     const body = commentText.trim();
@@ -137,6 +120,19 @@ export default function ExpenseDetailScreen() {
   const receiptIsPdf = !!expense?.receiptUrl && /\.pdf(\?.*)?$/i.test(expense.receiptUrl);
   const itemsTotal = expense?.items.reduce((acc, item) => acc + item.amount, 0) ?? 0;
   const taxTip = expense ? expense.amount - itemsTotal : 0;
+
+  // WI-058 — the surviving non-redundant mechanics text (PERCENT/SHARES/
+  // ADJUSTMENT raw input), reusing splitDetail() verbatim; empty for
+  // EQUAL/EXACT/ITEMIZED and for any split with a null mechanic field.
+  const splitDetails = expense
+    ? expense.splits
+        .map((split) => ({
+          id: split.user.id,
+          label: nameOf(split.user.id, split.user.name),
+          detail: splitDetail(expense, split),
+        }))
+        .filter((row): row is { id: string; label: string; detail: string } => row.detail !== null)
+    : [];
 
   return (
     <SafeAreaView
@@ -168,9 +164,7 @@ export default function ExpenseDetailScreen() {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Edit expense"
-                  onPress={() =>
-                    router.push({ pathname: '/expense/new', params: { expenseId: expense.id } })
-                  }
+                  onPress={editExpense}
                   hitSlop={8}
                   style={({ pressed }) => [
                     styles.headerButton,
@@ -182,14 +176,14 @@ export default function ExpenseDetailScreen() {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Delete expense"
-                  disabled={deleteExpense.isPending}
+                  disabled={isDeleting}
                   onPress={confirmDelete}
                   hitSlop={8}
                   style={({ pressed }) => [
                     styles.headerButton,
                     {
                       backgroundColor: pressed ? colors.surface2 : 'transparent',
-                      opacity: deleteExpense.isPending ? 0.4 : 1,
+                      opacity: isDeleting ? 0.4 : 1,
                     },
                   ]}
                 >
@@ -223,10 +217,15 @@ export default function ExpenseDetailScreen() {
               showsVerticalScrollIndicator={false}
               refreshControl={
                 <RefreshControl
-                  refreshing={expenseQuery.isRefetching || commentsQuery.isRefetching}
+                  refreshing={
+                    expenseQuery.isRefetching ||
+                    commentsQuery.isRefetching ||
+                    historyQuery.isRefetching
+                  }
                   onRefresh={() => {
                     void expenseQuery.refetch();
                     void commentsQuery.refetch();
+                    void historyQuery.refetch();
                   }}
                   tintColor={colors.ink3}
                 />
@@ -235,9 +234,19 @@ export default function ExpenseDetailScreen() {
               {isDeleted ? (
                 <View style={[styles.deletedBanner, { backgroundColor: withAlpha(colors.danger, 0.12) }]}>
                   <Ionicons name="trash-outline" size={16} color={colors.danger} />
-                  <Text style={[styles.deletedText, { color: colors.danger }]}>
+                  <Text style={[styles.deletedText, styles.deletedTextGrow, { color: colors.danger }]}>
                     This expense was deleted.
                   </Text>
+                  {/* WI-054b — visible only on a soft-deleted expense; any
+                      viewer who can see the expense may restore it (no
+                      creator/admin gate, mirrors Edit/Delete's own gating). */}
+                  <Button
+                    title="Restore"
+                    variant="secondary"
+                    size="sm"
+                    loading={isRestoring}
+                    onPress={restoreExpense}
+                  />
                 </View>
               ) : null}
 
@@ -249,9 +258,36 @@ export default function ExpenseDetailScreen() {
                 <Text style={[styles.heroDescription, { color: colors.ink }]}>
                   {expense.description}
                 </Text>
-                <Text style={[styles.heroAmount, { color: colors.ink }]}>
-                  {formatMoney(expense.amount, expense.currency)}
-                </Text>
+                {/* WI-068 §9.2 — display-type tabular amount header. */}
+                <MoneyText
+                  amount={expense.amount}
+                  currency={expense.currency}
+                  colored={false}
+                  size={fontSize.hero}
+                  weight="700"
+                  style={styles.heroAmount}
+                />
+                {expense.convertedAmount !== undefined ? (
+                  <View style={styles.heroConvertedRow}>
+                    <Text style={[styles.heroConverted, { color: colors.ink3 }]}>≈ </Text>
+                    <MoneyText
+                      amount={expense.convertedAmount}
+                      currency={expense.convertedCurrency!}
+                      colored={false}
+                      size={fontSize.md}
+                      weight="400"
+                      style={[styles.heroConverted, { color: colors.ink3 }]}
+                    />
+                    {expense.isApproximateRate ? (
+                      <Text
+                        accessibilityLabel="Approximate — today's rate; the rate on this expense's date isn't available"
+                        style={[styles.heroApprox, { color: colors.warning }]}
+                      >
+                        approx.
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
                 <Text style={[styles.heroMeta, { color: colors.ink3 }]}>
                   {category?.label} · {formatDateFull(expense.date)}
                   {expense.group ? ` · ${expense.group.emoji} ${expense.group.name}` : ''}
@@ -264,40 +300,54 @@ export default function ExpenseDetailScreen() {
                 <Text style={[styles.sectionTitle, { color: colors.ink3 }]}>PAID BY</Text>
                 {expense.payers.map((payer) => (
                   <View key={payer.user.id} style={styles.personRow}>
-                    <Avatar name={payer.user.name} color={payer.user.avatarColor} size={32} />
+                    <Avatar
+                      name={payer.user.name}
+                      color={payer.user.avatarColor}
+                      avatarUrl={payer.user.avatarUrl}
+                      size={32}
+                    />
                     <Text numberOfLines={1} style={[styles.personName, { color: colors.ink }]}>
                       {nameOf(payer.user.id, payer.user.name)}
                     </Text>
-                    <Text style={[styles.personAmount, { color: colors.ink }]}>
-                      {formatMoney(payer.amount, expense.currency)}
-                    </Text>
+                    <MoneyText
+                      amount={payer.amount}
+                      currency={expense.currency}
+                      colored={false}
+                      size={fontSize.md}
+                      weight="600"
+                    />
                   </View>
                 ))}
               </Card>
 
-              {/* Splits */}
+              {/* Split breakdown chart (analytics-owned, WI-039) — the sole
+                  source of per-person amount/percent (WI-058: the hand-rolled
+                  per-person list that used to sit above this card was removed
+                  as a duplicate). */}
               <Card padded={false} style={styles.sectionCard}>
                 <Text style={[styles.sectionTitle, { color: colors.ink3 }]}>SPLIT</Text>
-                {expense.splits.map((split) => {
-                  const detail = splitDetail(expense, split);
-                  return (
-                    <View key={split.user.id} style={styles.personRow}>
-                      <Avatar name={split.user.name} color={split.user.avatarColor} size={32} />
-                      <View style={styles.personBody}>
-                        <Text numberOfLines={1} style={[styles.personName, { color: colors.ink }]}>
-                          {nameOf(split.user.id, split.user.name)}
-                        </Text>
-                        {detail ? (
-                          <Text style={[styles.personDetail, { color: colors.ink3 }]}>{detail}</Text>
-                        ) : null}
-                      </View>
-                      <Text style={[styles.personAmount, { color: colors.ink }]}>
-                        {formatMoney(split.amount, expense.currency)}
-                      </Text>
-                    </View>
-                  );
-                })}
+                <ExpenseSplitChart
+                  currency={expense.currency}
+                  splits={expense.splits}
+                  totalAmount={expense.amount}
+                  viewerUserId={me?.id}
+                />
               </Card>
+
+              {/* Split details — the non-redundant splitType-specific mechanics
+                  text (PERCENT/SHARES/ADJUSTMENT input) that the chart doesn't
+                  carry. No avatar, no amount: those live on the chart above
+                  (WI-058). Renders nothing for EQUAL/EXACT/ITEMIZED. */}
+              {splitDetails.length > 0 ? (
+                <Card padded={false} style={styles.sectionCard}>
+                  <Text style={[styles.sectionTitle, { color: colors.ink3 }]}>SPLIT DETAILS</Text>
+                  {splitDetails.map((row) => (
+                    <Text key={row.id} style={[styles.personDetail, styles.splitDetailRow, { color: colors.ink3 }]}>
+                      {row.label} · {row.detail}
+                    </Text>
+                  ))}
+                </Card>
+              ) : null}
 
               {/* Items */}
               {expense.splitType === 'ITEMIZED' && expense.items.length > 0 ? (
@@ -314,9 +364,13 @@ export default function ExpenseDetailScreen() {
                           {item.participantIds.length === 1 ? 'person' : 'people'}
                         </Text>
                       </View>
-                      <Text style={[styles.personAmount, { color: colors.ink }]}>
-                        {formatMoney(item.amount, expense.currency)}
-                      </Text>
+                      <MoneyText
+                        amount={item.amount}
+                        currency={expense.currency}
+                        colored={false}
+                        size={fontSize.md}
+                        weight="600"
+                      />
                     </View>
                   ))}
                   {taxTip > 0 ? (
@@ -324,9 +378,14 @@ export default function ExpenseDetailScreen() {
                       <Text style={[styles.personDetail, { color: colors.ink3, flex: 1 }]}>
                         Tax / tip / fees
                       </Text>
-                      <Text style={[styles.personAmount, { color: colors.ink2 }]}>
-                        {formatMoney(taxTip, expense.currency)}
-                      </Text>
+                      <MoneyText
+                        amount={taxTip}
+                        currency={expense.currency}
+                        colored={false}
+                        size={fontSize.md}
+                        weight="600"
+                        style={{ color: colors.ink2 }}
+                      />
                     </View>
                   ) : null}
                 </Card>
@@ -382,6 +441,61 @@ export default function ExpenseDetailScreen() {
                   : ''}
               </Text>
 
+              {/* History */}
+              <Card style={styles.historyCard}>
+                <Text style={[styles.sectionTitle, { color: colors.ink3 }]}>HISTORY</Text>
+                {historyQuery.isLoading ? (
+                  <SkeletonList rows={2} />
+                ) : historyQuery.isError ? (
+                  <View style={styles.commentsError}>
+                    <InlineError message={errorMessage(historyQuery.error)} />
+                    <Button
+                      title="Try again"
+                      variant="secondary"
+                      size="sm"
+                      onPress={() => void historyQuery.refetch()}
+                    />
+                  </View>
+                ) : (historyQuery.data ?? []).length === 0 ? (
+                  <Text style={[styles.noComments, { color: colors.ink3 }]}>No history yet.</Text>
+                ) : (
+                  (historyQuery.data ?? []).map((revision) => (
+                    <View key={revision.id} style={styles.historyRow}>
+                      <Avatar
+                        name={revision.actor.name}
+                        color={revision.actor.avatarColor}
+                        avatarUrl={revision.actor.avatarUrl}
+                        size={30}
+                      />
+                      <View style={styles.historyBody}>
+                        <View style={styles.commentMeta}>
+                          <Text style={[styles.commentAuthor, { color: colors.ink }]}>
+                            {nameOf(revision.actor.id, revision.actor.name)}
+                          </Text>
+                          <Text style={[styles.commentTime, { color: colors.ink3 }]}>
+                            {formatRelative(revision.createdAt)}
+                          </Text>
+                        </View>
+                        {revision.kind === 'CREATED' ? (
+                          <Text style={[styles.historyLine, { color: colors.ink2 }]}>
+                            {formatHistoryKindLine(revision.kind)}
+                          </Text>
+                        ) : (
+                          revision.changes.map((change, index) => (
+                            <Text
+                              key={`${revision.id}-${change.field}-${index}`}
+                              style={[styles.historyLine, { color: colors.ink2 }]}
+                            >
+                              {formatHistoryChangeLine(change, SPLIT_TYPE_LABELS)}
+                            </Text>
+                          ))
+                        )}
+                      </View>
+                    </View>
+                  ))
+                )}
+              </Card>
+
               {/* Comments */}
               <View style={styles.commentsBlock}>
                 <Text style={[styles.commentsTitle, { color: colors.ink2 }]}>
@@ -409,6 +523,7 @@ export default function ExpenseDetailScreen() {
                       <Avatar
                         name={comment.author.name}
                         color={comment.author.avatarColor}
+                        avatarUrl={comment.author.avatarUrl}
                         size={30}
                       />
                       <View style={[styles.commentBubble, { backgroundColor: colors.surface2 }]}>
@@ -546,6 +661,9 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     fontWeight: '600',
   },
+  deletedTextGrow: {
+    flex: 1,
+  },
   hero: {
     alignItems: 'center',
     paddingTop: spacing.sm,
@@ -567,10 +685,21 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
   },
   heroAmount: {
-    fontSize: fontSize.hero,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
     marginTop: spacing.xs,
+  },
+  heroConvertedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.xs,
+  },
+  heroConverted: {
+    fontSize: fontSize.md,
+    fontVariant: ['tabular-nums'],
+  },
+  heroApprox: {
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    marginLeft: spacing.xs,
   },
   heroMeta: {
     fontSize: fontSize.sm,
@@ -611,10 +740,8 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xs,
     marginTop: 1,
   },
-  personAmount: {
-    fontSize: fontSize.md,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
+  splitDetailRow: {
+    paddingVertical: spacing.xs + 2,
   },
   taxRow: {
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -648,6 +775,23 @@ const styles = StyleSheet.create({
   provenance: {
     fontSize: fontSize.xs,
     textAlign: 'center',
+  },
+  historyCard: {
+    gap: spacing.md,
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm + 2,
+  },
+  historyBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+  historyLine: {
+    fontSize: fontSize.sm,
+    marginTop: 2,
+    lineHeight: 19,
   },
   commentsBlock: {
     gap: spacing.md,

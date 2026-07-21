@@ -1,15 +1,11 @@
 'use client';
 
 import { Check, ChevronDown, Users } from 'lucide-react';
-import {
-  formatMoney,
-  type ExpenseDto,
-  type ExpensePayerInput,
-  type PublicUserDto,
-} from '@divzy/shared';
+import type { ExpenseDto, ExpensePayerInput, PublicUserDto } from '@divzy/shared';
 import { AmountInput } from '@/components/ui/amount-input';
 import { Avatar } from '@/components/ui/avatar';
 import { Dropdown, DropdownItem, DropdownSeparator } from '@/components/ui/dropdown';
+import { MoneyText } from '@/components/ui/money-text';
 import { cn } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
@@ -122,11 +118,12 @@ export function PayerSelector({ members, meId, amount, currency, value, onChange
         ) : (
           <p
             className={cn(
-              'text-right text-[13px] font-medium',
+              'flex items-center justify-end gap-1 text-right text-[13px] font-medium',
               remaining > 0 ? 'text-warn' : 'text-neg',
             )}
           >
-            {formatMoney(Math.abs(remaining), currency)} {remaining > 0 ? 'left to assign' : 'over'}
+            <MoneyText amount={Math.abs(remaining)} currency={currency} />
+            {remaining > 0 ? 'left to assign' : 'over'}
           </p>
         )}
       </div>

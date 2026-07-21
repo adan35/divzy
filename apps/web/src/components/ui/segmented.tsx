@@ -50,7 +50,7 @@ export function SegmentedControl<T extends string>({
               'whitespace-nowrap rounded-lg font-medium transition-colors',
               size === 'sm' ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-[13px]',
               active
-                ? 'bg-surface text-ink shadow-sm dark:shadow-none'
+                ? 'bg-surface text-ink shadow-card dark:shadow-top-edge'
                 : 'text-ink-2 hover:text-ink',
               opt.disabled && 'cursor-not-allowed opacity-50',
             )}

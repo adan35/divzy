@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { ApiError } from '@divzy/api-client';
 import { LIMITS, zRegisterInput } from '@divzy/shared';
 import { errorMessage, useRegister } from '@/lib/hooks';
@@ -170,7 +170,10 @@ export default function RegisterPage() {
                 tabIndex={-1}
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
                 onClick={() => setShowPassword((s) => !s)}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg p-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+                // WI-068 AC-10b (defect-WI-068-1): 44x44 hit area (spec §12)
+                // filling the input's `pr-11` reservation; glyph stays 16px.
+                // Absolutely positioned, so no layout shift.
+                className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-[10px] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
               >
                 {showPassword ? (
                   <EyeOff className="h-4 w-4" aria-hidden="true" />
@@ -204,8 +207,9 @@ export default function RegisterPage() {
         {submitError && (
           <p
             role="alert"
-            className="rounded-[10px] bg-neg-soft px-3.5 py-2.5 text-sm text-danger"
+            className="flex items-start gap-2 rounded-[10px] bg-neg-soft px-3.5 py-2.5 text-sm text-danger"
           >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
             {submitError}
           </p>
         )}

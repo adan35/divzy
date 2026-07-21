@@ -30,7 +30,7 @@ export function SkeletonList({ rows = 4, avatar = true, className }: SkeletonLis
       {Array.from({ length: rows }, (_, i) => (
         <div
           key={i}
-          className="flex items-center gap-3 rounded-xl2 border border-hairline bg-surface p-4"
+          className="flex items-center gap-3 rounded-xl2 border border-hairline bg-surface p-4 shadow-card dark:shadow-top-edge"
         >
           {avatar && <Skeleton className="h-9 w-9 shrink-0 rounded-full" />}
           <div className="flex-1 space-y-2">

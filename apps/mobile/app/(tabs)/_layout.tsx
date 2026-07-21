@@ -21,11 +21,21 @@ function tabIcon(focusedName: IconName, idleName: IconName) {
   };
 }
 
-/** Big brand circle for the fake center Add tab. */
+/**
+ * Big brand-fill circle for the fake center Add tab (spec-WI-068 §9.2: 48pt,
+ * `brandFill`, light-mode-only shadow — dark elevation uses no shadows,
+ * spec §1.1).
+ */
 function AddTabIcon() {
-  const { colors } = useTheme();
+  const { colors, scheme } = useTheme();
   return (
-    <View style={[styles.addButton, { backgroundColor: colors.brand }]}>
+    <View
+      style={[
+        styles.addButton,
+        { backgroundColor: colors.brandFill },
+        scheme === 'light' && [styles.addButtonShadow, { shadowColor: colors.ink }],
+      ]}
+    >
       <Ionicons name="add" size={26} color={colors.onBrand} />
     </View>
   );
@@ -88,17 +98,30 @@ export default function TabsLayout() {
           tabBarIcon: tabIcon('person-circle', 'person-circle-outline'),
         }}
       />
+      <Tabs.Screen
+        name="more"
+        options={{
+          title: 'More',
+          tabBarIcon: tabIcon('ellipsis-horizontal', 'ellipsis-horizontal-outline'),
+        }}
+      />
     </Tabs>
   );
 }
 
 const styles = StyleSheet.create({
   addButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: -6,
+  },
+  addButtonShadow: {
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
   },
 });

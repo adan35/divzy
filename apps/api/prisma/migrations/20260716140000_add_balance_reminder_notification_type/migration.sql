@@ -1,0 +1,12 @@
+-- WI-016 (reminders half, notifications-activity slice) — extend NotificationType
+-- with a 10th value, BALANCE_REMINDER, delivered only via sendSystemNotification
+-- (spec-WI-016, ADR-020), never recordActivity. Additive only: no existing value
+-- is renamed or removed, and no row's `type` column is altered. Existing rows
+-- keep their current value and remain valid with no backfill; Postgres enum
+-- ADD VALUE is purely additive to the type's legal value set.
+--
+-- Note: a newly-added enum value cannot be used in the same transaction that
+-- adds it (PG12+ restriction). This migration only adds the value -- it does
+-- not INSERT/UPDATE any row referencing it -- so it is safe to apply as a
+-- single migration.
+ALTER TYPE "NotificationType" ADD VALUE 'BALANCE_REMINDER';
