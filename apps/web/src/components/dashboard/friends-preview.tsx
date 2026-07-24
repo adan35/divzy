@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { ChevronRight } from 'lucide-react';
 import type { FriendDto } from '@divzy/shared';
 import { useFriends } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth-store';
@@ -13,6 +14,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { FallbackRatesNotice } from '@/components/ui/fallback-rates-notice';
 import { MoneyText } from '@/components/ui/money-text';
 import { SkeletonList } from '@/components/ui/skeleton';
+import { FriendBalanceBreakdown } from '@/components/friends/friend-balance-breakdown';
 import { SettleUpDialog } from '@/components/settle/settle-dialog';
 import { balanceMagnitude } from './balance-utils';
 import { SectionError } from './section-error';
@@ -36,52 +38,79 @@ export function FriendRow({ friend, onClick }: { friend: FriendDto; onClick?: ()
   const visible = entries.slice(0, 2);
   const more = entries.length - visible.length;
 
+  // WI-079 D6/D11: collapsed by default; the expand affordance is a separate
+  // chevron button (interactive elements cannot nest, so the row is
+  // restructured to an outer <div> — the settle-intent button below keeps its
+  // unchanged click → handleRowClick). Affordance governed by bucket count
+  // only: ≤1 bucket suppresses it, never the friend's settled state.
+  const [expanded, setExpanded] = useState(false);
+  const canExpand = friend.balancesByGroup.length > 1;
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2"
-    >
-      <Avatar user={friend.user} size="md" />
-      <div className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-ink">{friend.user.name}</span>
-        {entries.length === 0 ? (
-          <span className="block text-[13px] text-ink-3">Settled up</span>
-        ) : (
-          <>
-            {visible.map((b) => (
-              <span
-                key={b.currency}
-                className={cn(
-                  'block truncate text-[13px]',
-                  b.amount > 0 ? 'text-pos' : b.amount < 0 ? 'text-neg' : 'text-ink-3',
+    <div>
+      <div className="flex items-center pr-4">
+        <button
+          type="button"
+          onClick={onClick}
+          className="flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 pr-2 text-left transition-colors hover:bg-surface-2"
+        >
+          <Avatar user={friend.user} size="md" />
+          <div className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium text-ink">{friend.user.name}</span>
+            {entries.length === 0 ? (
+              <span className="block text-[13px] text-ink-3">Settled up</span>
+            ) : (
+              <>
+                {visible.map((b) => (
+                  <span
+                    key={b.currency}
+                    className={cn(
+                      'block truncate text-[13px]',
+                      b.amount > 0 ? 'text-pos' : b.amount < 0 ? 'text-neg' : 'text-ink-3',
+                    )}
+                  >
+                    {b.amount === 0 ? (
+                      `You and ${firstName(friend.user.name)} are settled up`
+                    ) : b.amount > 0 ? (
+                      <>
+                        {firstName(friend.user.name)} owes you{' '}
+                        <MoneyText amount={b.amount} currency={b.currency} />
+                      </>
+                    ) : (
+                      <>
+                        You owe {firstName(friend.user.name)}{' '}
+                        <MoneyText amount={-b.amount} currency={b.currency} />
+                      </>
+                    )}
+                  </span>
+                ))}
+                {more > 0 && (
+                  <span className="block text-xs text-ink-3">
+                    +{more} more {more === 1 ? 'currency' : 'currencies'}
+                  </span>
                 )}
-              >
-                {b.amount === 0 ? (
-                  `You and ${firstName(friend.user.name)} are settled up`
-                ) : b.amount > 0 ? (
-                  <>
-                    {firstName(friend.user.name)} owes you{' '}
-                    <MoneyText amount={b.amount} currency={b.currency} />
-                  </>
-                ) : (
-                  <>
-                    You owe {firstName(friend.user.name)}{' '}
-                    <MoneyText amount={-b.amount} currency={b.currency} />
-                  </>
-                )}
-              </span>
-            ))}
-            {more > 0 && (
-              <span className="block text-xs text-ink-3">
-                +{more} more {more === 1 ? 'currency' : 'currencies'}
-              </span>
+                {friend.usedFallbackRates && <FallbackRatesNotice className="text-[11px]" />}
+              </>
             )}
-            {friend.usedFallbackRates && <FallbackRatesNotice className="text-[11px]" />}
-          </>
+          </div>
+        </button>
+        {canExpand && (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-label="Show per-group breakdown"
+            onClick={() => setExpanded((v) => !v)}
+            className="shrink-0 rounded-md p-1 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+          >
+            <ChevronRight
+              className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')}
+              aria-hidden="true"
+            />
+          </button>
         )}
       </div>
-    </button>
+      {canExpand && expanded && <FriendBalanceBreakdown friend={friend} />}
+    </div>
   );
 }
 

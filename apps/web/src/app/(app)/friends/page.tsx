@@ -6,6 +6,7 @@ import { ChevronRight, QrCode, RefreshCw, UserPlus } from 'lucide-react';
 import { matchesBalanceFilter, type BalanceFilter, type FriendDto } from '@divzy/shared';
 import { useFriends, errorMessage } from '@/lib/hooks';
 import { collapsedBalanceEntries } from '@/lib/balance-display';
+import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -16,6 +17,7 @@ import { Select } from '@/components/ui/select';
 import { SkeletonList } from '@/components/ui/skeleton';
 import { AddFriendDialog } from '@/components/friends/add-friend-dialog';
 import { BalanceSentence } from '@/components/friends/balance-sentence';
+import { FriendBalanceBreakdown } from '@/components/friends/friend-balance-breakdown';
 import { FriendCodeDialog } from '@/components/friends/friend-code-dialog';
 import { FriendsBalanceSummary } from '@/components/friends/friends-balance-summary';
 
@@ -47,46 +49,76 @@ function FriendRow({ friend }: { friend: FriendDto }) {
   const amountEntries = entries.slice(0, 2);
   const moreAmounts = entries.length - amountEntries.length;
 
+  // WI-079 D6/D11: collapsed by default; the expand affordance is a dedicated
+  // chevron toggle (never an overloaded row tap — the Link keeps its
+  // navigation), governed purely by bucket count. A friend whose collapsed
+  // net is ZERO can still carry ≥2 nonzero buckets (cross-bucket cancel) and
+  // keeps the affordance; ≤1 bucket suppresses it (it would duplicate the row).
+  const [expanded, setExpanded] = useState(false);
+  const canExpand = friend.balancesByGroup.length > 1;
+
   return (
-    <Link
-      href={`/friends/${friend.user.id}`}
-      className="flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-surface-2"
-    >
-      <Avatar user={friend.user} size="md" />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-ink">{friend.user.name}</p>
-        {!primary ? (
-          <p className="text-[13px] text-ink-3">Settled up</p>
-        ) : (
-          <p className="truncate text-[13px]">
-            <BalanceSentence
-              name={firstName(friend.user.name)}
-              amount={primary.amount}
-              currency={primary.currency}
-            />
-            {entries.length > 1 && (
-              <span className="text-ink-3"> · +{entries.length - 1} more</span>
+    <div>
+      <div className="flex items-center pr-4">
+        <Link
+          href={`/friends/${friend.user.id}`}
+          className="flex min-w-0 flex-1 items-center gap-3 py-3.5 pl-4 pr-2 transition-colors hover:bg-surface-2"
+        >
+          <Avatar user={friend.user} size="md" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-ink">{friend.user.name}</p>
+            {!primary ? (
+              <p className="text-[13px] text-ink-3">Settled up</p>
+            ) : (
+              <p className="truncate text-[13px]">
+                <BalanceSentence
+                  name={firstName(friend.user.name)}
+                  amount={primary.amount}
+                  currency={primary.currency}
+                />
+                {entries.length > 1 && (
+                  <span className="text-ink-3"> · +{entries.length - 1} more</span>
+                )}
+              </p>
             )}
-          </p>
-        )}
-      </div>
-      {amountEntries.length > 0 && (
-        <div className="flex shrink-0 flex-col items-end gap-0.5">
-          {amountEntries.map((b) => (
-            <MoneyText
-              key={b.currency}
-              amount={b.amount}
-              currency={b.currency}
-              mode="signed-color"
-              className="text-[13px]"
+          </div>
+          {amountEntries.length > 0 && (
+            <div className="flex shrink-0 flex-col items-end gap-0.5">
+              {amountEntries.map((b) => (
+                <MoneyText
+                  key={b.currency}
+                  amount={b.amount}
+                  currency={b.currency}
+                  mode="signed-color"
+                  className="text-[13px]"
+                />
+              ))}
+              {moreAmounts > 0 && <p className="text-xs text-ink-3">+{moreAmounts} more</p>}
+              {friend.usedFallbackRates && <p className="text-[11px] text-warn">est. rate</p>}
+            </div>
+          )}
+        </Link>
+        {canExpand && (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-label="Show per-group breakdown"
+            onClick={() => setExpanded((v) => !v)}
+            className="shrink-0 rounded-md p-1 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+          >
+            <ChevronRight
+              className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')}
+              aria-hidden="true"
             />
-          ))}
-          {moreAmounts > 0 && <p className="text-xs text-ink-3">+{moreAmounts} more</p>}
-          {friend.usedFallbackRates && <p className="text-[11px] text-warn">est. rate</p>}
-        </div>
-      )}
-      <ChevronRight className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
-    </Link>
+          </button>
+        )}
+        {/* The decorative navigation chevron moved out of the Link (WI-079):
+            interactive elements cannot nest inside an anchor, so the expand
+            toggle sits immediately before it as a sibling. */}
+        <ChevronRight className="ml-1 h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+      </div>
+      {canExpand && expanded && <FriendBalanceBreakdown friend={friend} />}
+    </div>
   );
 }
 

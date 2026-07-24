@@ -15,6 +15,7 @@ function makeFriend(overrides: Partial<FriendDto> = {}): FriendDto {
     balancesNative: [],
     balancesConverted: null,
     usedFallbackRates: false,
+    balancesByGroup: [],
     lastActivityAt: null,
     ...overrides,
   };

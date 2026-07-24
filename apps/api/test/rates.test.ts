@@ -89,6 +89,67 @@ describe('resolveConversionRates', () => {
   });
 });
 
+// WI-079 / ADR-033 Decision 3 (canonical contract, drb-architecture R1) ------
+// One additive field: fallbackCurrencies — UPPERCASED codes of every requested
+// currency whose resolved rate came from the bundled fallback table; viewer's
+// own currency excluded; empty when everything resolved live.
+
+describe('resolveConversionRates — fallbackCurrencies (WI-079, ADR-033 Decision 3)', () => {
+  it('lists only the currencies patched from the fallback table when the base resolves live', async () => {
+    findUniqueMock.mockResolvedValue(freshCacheRow('USD', { USD: 1, EUR: 0.9, GBP: 0.8 })); // PKR missing live
+
+    const result = await resolveConversionRates('USD', ['EUR', 'PKR', 'GBP']);
+
+    expect(result.fallbackCurrencies).toEqual(['PKR']);
+    expect(result.usedFallbackRates).toBe(true);
+  });
+
+  it('is empty when every requested currency resolved live', async () => {
+    findUniqueMock.mockResolvedValue(freshCacheRow('USD', { USD: 1, EUR: 0.9, GBP: 0.8 }));
+
+    const result = await resolveConversionRates('USD', ['EUR', 'GBP']);
+
+    expect(result.fallbackCurrencies).toEqual([]);
+    expect(result.usedFallbackRates).toBe(false);
+  });
+
+  it('lists every requested currency when the whole base resolution fell back, excluding the viewer currency', async () => {
+    findUniqueMock.mockResolvedValue(null); // no cache row
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+
+    const result = await resolveConversionRates('USD', ['EUR', 'GBP', 'USD']);
+
+    expect(result.fallbackCurrencies).toEqual(['EUR', 'GBP']);
+    expect(result.usedFallbackRates).toBe(true);
+  });
+
+  it('uppercases the listed codes regardless of request and target casing', async () => {
+    findUniqueMock.mockResolvedValue(freshCacheRow('USD', { USD: 1, EUR: 0.9 })); // no PKR live
+
+    const result = await resolveConversionRates('usd', ['pkr']);
+
+    expect(result.fallbackCurrencies).toEqual(['PKR']);
+  });
+
+  it('dedupes repeated requests for the same fallback currency', async () => {
+    findUniqueMock.mockResolvedValue(freshCacheRow('USD', { USD: 1 })); // no PKR live
+
+    const result = await resolveConversionRates('USD', ['pkr', 'PKR']);
+
+    expect(result.fallbackCurrencies).toEqual(['PKR']);
+  });
+
+  it('does not change the existing rates/usedFallbackRates outputs', async () => {
+    findUniqueMock.mockResolvedValue(freshCacheRow('USD', { USD: 1, EUR: 0.9 })); // no PKR live
+
+    const result = await resolveConversionRates('USD', ['EUR', 'PKR']);
+
+    expect(result.rates).toMatchObject({ USD: 1, EUR: 0.9 });
+    expect(result.rates.PKR).toBeGreaterThan(0);
+    expect(result.usedFallbackRates).toBe(true);
+  });
+});
+
 // spec-WI-072 §1 / story regression-test requirement (a) — getRates()'s
 // in-process 60s TTL memo + single-flight, sitting in front of the DB read
 // exercised above. Unlike every other describe block in this file, these two

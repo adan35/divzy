@@ -3,13 +3,16 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import {
   computePairwiseBalances,
+  computePairwiseBalancesByGroup,
   formatMoney,
   zAddFriendByCodeInput,
   zAddFriendInput,
   zId,
   type CurrencyAmount,
+  type FriendBalanceBucket,
   type FriendCodeDto,
   type FriendDto,
+  type GroupAttributedPairwiseDebt,
 } from '@divzy/shared';
 import { recordActivity } from '../lib/activity';
 import { convertBalanceForViewer, type ConvertedBalance } from '../lib/balance-conversion';
@@ -103,6 +106,111 @@ function balanceMagnitude(converted: ConvertedBalance | null, leftovers: Currenc
   return convertedMagnitude + leftoverMagnitude;
 }
 
+/** The {id,name,emoji} group label embed shape (mirrors SettlementDto.group). */
+interface GroupLabel {
+  id: string;
+  name: string;
+  emoji: string;
+}
+
+/**
+ * WI-079 (spec §4 C3): the caller's group-label lookup for one compute pass.
+ * One groupMember.findMany inside the existing Promise.all batch — zero new
+ * SEQUENTIAL round-trips, no leftAt filter (membership rows are never
+ * deleted; a left group's labels must still resolve). The `?.` tolerance
+ * exists ONLY for legacy mocked-prisma test doubles that stub just the
+ * models the pre-WI-079 route used (spec §8 T4 pins those suites to pass
+ * unmodified); against the real client this is always the live query, and
+ * the drb-security N1 rule stands: a missing label falls back to the static
+ * "Unknown group" embed below — NEVER a group.findMany lookup.
+ */
+function fetchGroupLabels(userId: string) {
+  return (
+    prisma.groupMember?.findMany({
+      where: { userId },
+      select: { group: { select: { id: true, name: true, emoji: true } } },
+    }) ?? Promise.resolve([])
+  );
+}
+
+function toGroupLabelMap(rows: Array<{ group: GroupLabel }>): Map<string, GroupLabel> {
+  return new Map(rows.map((row) => [row.group.id, row.group]));
+}
+
+/**
+ * WI-079 (spec §4 C4, ADR-033 Decision 1): build the per-(group|direct)
+ * buckets for one (caller, friend) pair from the group-attributed pairwise
+ * engine output. Same sign convention as the top-level computation
+ * (debt.fromUserId === callerId ? -amount : +amount; positive = friend owes
+ * caller). Buckets whose native list nets to zero in every currency are
+ * dropped (belt-and-braces on top of the engine's own zero-bucket drop, per
+ * spec §1 scenario 4). Conversion reuses the request-scoped rates map — no
+ * I/O here. Per-bucket usedFallbackRates is the D4 membership test against
+ * fallbackCurrencies (UPPERCASED codes) with mandatory .toUpperCase()
+ * normalization. Final sort is the owned DTO contract: magnitude desc,
+ * direct (group: null) last on ties, then group name asc.
+ */
+function buildFriendBuckets(
+  callerId: string,
+  friendId: string,
+  pairwiseByGroup: GroupAttributedPairwiseDebt[],
+  groupLabels: Map<string, GroupLabel>,
+  viewerCurrency: string,
+  rates: Record<string, number>,
+  fallbackCurrencies: string[],
+): FriendBalanceBucket[] {
+  const perGroup = new Map<string | null, Map<string, number>>();
+  for (const debt of pairwiseByGroup) {
+    const involvesPair =
+      (debt.fromUserId === callerId && debt.toUserId === friendId) ||
+      (debt.fromUserId === friendId && debt.toUserId === callerId);
+    if (!involvesPair) continue;
+    const delta = debt.fromUserId === callerId ? -debt.amount : debt.amount;
+    let perCurrency = perGroup.get(debt.groupId);
+    if (!perCurrency) {
+      perCurrency = new Map();
+      perGroup.set(debt.groupId, perCurrency);
+    }
+    perCurrency.set(debt.currency, (perCurrency.get(debt.currency) ?? 0) + delta);
+  }
+
+  const buckets: FriendBalanceBucket[] = [];
+  for (const [groupId, perCurrency] of perGroup) {
+    const balancesNative: CurrencyAmount[] = [...perCurrency.entries()]
+      .filter(([, amount]) => amount !== 0)
+      .map(([currency, amount]) => ({ currency, amount }))
+      .sort((a, b) => a.currency.localeCompare(b.currency));
+    if (balancesNative.length === 0) continue; // settled bucket never renders
+    const { converted, leftovers } = convertBalanceForViewer(balancesNative, viewerCurrency, rates);
+    buckets.push({
+      group:
+        groupId === null
+          ? null
+          : (groupLabels.get(groupId) ?? { id: groupId, name: 'Unknown group', emoji: '🧾' }),
+      balances: leftovers,
+      balancesNative,
+      balancesConverted: converted,
+      usedFallbackRates: balancesNative.some((b) =>
+        fallbackCurrencies.includes(b.currency.toUpperCase()),
+      ),
+    });
+  }
+
+  buckets.sort(
+    (a, b) =>
+      balanceMagnitude(b.balancesConverted, b.balances) -
+        balanceMagnitude(a.balancesConverted, a.balances) ||
+      (a.group === null
+        ? b.group === null
+          ? 0
+          : 1
+        : b.group === null
+          ? -1
+          : a.group.name.localeCompare(b.group.name)),
+  );
+  return buckets;
+}
+
 /**
  * Shared "add friend" flow behind both POST /friends (by email) and
  * POST /friends/add-by-code (WI-040) — same friendship semantics either way:
@@ -158,6 +266,7 @@ async function addFriendPair(callerId: string, target: PublicUserPayload): Promi
     balancesNative: [],
     balancesConverted: null,
     usedFallbackRates: false,
+    balancesByGroup: [],
     lastActivityAt: friendship ? friendship.createdAt.toISOString() : null,
   };
 }
@@ -174,6 +283,10 @@ async function addFriendPair(callerId: string, target: PublicUserPayload): Promi
  * `computeFriendsList` also selects) and runs `resolveConversionRates`/
  * `convertBalanceForViewer` exactly as GET /friends does per-friend, so the
  * two paths return field-identical DTOs for the same pair at the same moment.
+ * WI-079: both selects also gain `groupId`, and the same group-attributed
+ * engine pass + batched label fetch populate `balancesByGroup` — the
+ * WI-070 §2b "field-identical DTOs" parity rule makes this field mandatory
+ * here too.
  */
 async function computeFriendDto(
   callerId: string,
@@ -187,7 +300,7 @@ async function computeFriendDto(
 ): Promise<FriendDto> {
   const target = friendship.userAId === callerId ? friendship.userB : friendship.userA;
 
-  const [expenses, settlements] = await Promise.all([
+  const [expenses, settlements, groupMemberships] = await Promise.all([
     prisma.expense.findMany({
       where: {
         deletedAt: null,
@@ -198,6 +311,7 @@ async function computeFriendDto(
       },
       select: {
         currency: true,
+        groupId: true,
         createdAt: true,
         payers: { select: { userId: true, amount: true } },
         splits: { select: { userId: true, amount: true } },
@@ -205,9 +319,18 @@ async function computeFriendDto(
     }),
     prisma.settlement.findMany({
       where: { deletedAt: null, OR: [{ fromUserId: callerId }, { toUserId: callerId }] },
-      select: { currency: true, fromUserId: true, toUserId: true, amount: true, createdAt: true },
+      select: {
+        currency: true,
+        groupId: true,
+        fromUserId: true,
+        toUserId: true,
+        amount: true,
+        createdAt: true,
+      },
     }),
+    fetchGroupLabels(callerId),
   ]);
+  const groupLabels = toGroupLabelMap(groupMemberships);
 
   // Result-narrow: run the pairwise engine over the caller's full ledger,
   // then filter to just the (callerId, target.id) pair — same shape as
@@ -217,6 +340,9 @@ async function computeFriendDto(
       (d.fromUserId === callerId && d.toUserId === target.id) ||
       (d.fromUserId === target.id && d.toUserId === callerId),
   );
+  // WI-079: the group-attributed pass over the SAME two arrays (its buckets
+  // partition the collapsed result exactly — the reconciliation invariant).
+  const pairwiseByGroup = computePairwiseBalancesByGroup(expenses, settlements);
 
   // Signed native per-currency for this pair (positive = target owes caller)
   // — identical sign convention to computeFriendsList's balancesByFriend map.
@@ -230,7 +356,7 @@ async function computeFriendDto(
     .map(([currency, amount]) => ({ currency, amount }))
     .sort((a, b) => a.currency.localeCompare(b.currency));
 
-  const { rates, usedFallbackRates } = await resolveConversionRates(
+  const { rates, usedFallbackRates, fallbackCurrencies } = await resolveConversionRates(
     viewerCurrency,
     nativeBalances.map((b) => b.currency),
   );
@@ -260,6 +386,15 @@ async function computeFriendDto(
     balancesNative: nativeBalances,
     balancesConverted: converted,
     usedFallbackRates,
+    balancesByGroup: buildFriendBuckets(
+      callerId,
+      target.id,
+      pairwiseByGroup,
+      groupLabels,
+      viewerCurrency,
+      rates,
+      fallbackCurrencies,
+    ),
     lastActivityAt: lastActivity.toISOString(),
   };
 }
@@ -273,7 +408,7 @@ async function computeFriendsList(userId: string): Promise<FriendDto[]> {
   // Same ledger queries as GET /balance (per CONTRACTS): every non-deleted
   // expense the caller is on + every settlement they are a party to. The
   // pairwise engine runs ONCE and is filtered per friend below.
-  const [friendships, expenses, settlements, user] = await Promise.all([
+  const [friendships, expenses, settlements, user, groupMemberships] = await Promise.all([
     prisma.friendship.findMany({
       where: { OR: [{ userAId: userId }, { userBId: userId }] },
       include: {
@@ -288,6 +423,7 @@ async function computeFriendsList(userId: string): Promise<FriendDto[]> {
       },
       select: {
         currency: true,
+        groupId: true,
         createdAt: true,
         payers: { select: { userId: true, amount: true } },
         splits: { select: { userId: true, amount: true } },
@@ -297,6 +433,7 @@ async function computeFriendsList(userId: string): Promise<FriendDto[]> {
       where: { deletedAt: null, OR: [{ fromUserId: userId }, { toUserId: userId }] },
       select: {
         currency: true,
+        groupId: true,
         fromUserId: true,
         toUserId: true,
         amount: true,
@@ -304,10 +441,15 @@ async function computeFriendsList(userId: string): Promise<FriendDto[]> {
       },
     }),
     prisma.user.findUnique({ where: { id: userId }, select: { defaultCurrency: true } }),
+    fetchGroupLabels(userId),
   ]);
   if (!user) throw new AppError(401, 'UNAUTHORIZED', 'Account no longer exists');
+  const groupLabels = toGroupLabelMap(groupMemberships);
 
   const pairwise = computePairwiseBalances(expenses, settlements);
+  // WI-079: the group-attributed pass over the SAME two arrays (its buckets
+  // partition the collapsed result exactly — the reconciliation invariant).
+  const pairwiseByGroup = computePairwiseBalancesByGroup(expenses, settlements);
 
   // friendId -> currency -> signed amount (positive = they owe the caller).
   const balancesByFriend = new Map<string, Map<string, number>>();
@@ -360,9 +502,10 @@ async function computeFriendsList(userId: string): Promise<FriendDto[]> {
     for (const entry of balances) distinctCurrencies.add(entry.currency);
   }
 
-  const { rates, usedFallbackRates } = await resolveConversionRates(user.defaultCurrency, [
-    ...distinctCurrencies,
-  ]);
+  const { rates, usedFallbackRates, fallbackCurrencies } = await resolveConversionRates(
+    user.defaultCurrency,
+    [...distinctCurrencies],
+  );
 
   const friends: FriendDto[] = friendships.map((friendship) => {
     const other = friendship.userAId === userId ? friendship.userB : friendship.userA;
@@ -381,6 +524,15 @@ async function computeFriendsList(userId: string): Promise<FriendDto[]> {
       balancesNative: nativeBalances,
       balancesConverted: converted,
       usedFallbackRates,
+      balancesByGroup: buildFriendBuckets(
+        userId,
+        other.id,
+        pairwiseByGroup,
+        groupLabels,
+        user.defaultCurrency,
+        rates,
+        fallbackCurrencies,
+      ),
       lastActivityAt: lastActivity.toISOString(),
     };
   });

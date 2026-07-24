@@ -5,6 +5,9 @@ export interface LedgerExpense {
   currency: string;
   payers: ComputedSplit[];
   splits: ComputedSplit[];
+  /** Real group id, or null/absent for direct (non-group) activity. Mirrors
+   *  Expense.groupId. Inert to every function except computePairwiseBalancesByGroup. */
+  groupId?: string | null;
 }
 
 export interface LedgerSettlement {
@@ -12,6 +15,9 @@ export interface LedgerSettlement {
   fromUserId: string;
   toUserId: string;
   amount: number;
+  /** Real group id, or null/absent for a direct settlement. Mirrors
+   *  Settlement.groupId. Inert to every function except computePairwiseBalancesByGroup. */
+  groupId?: string | null;
 }
 
 export interface CurrencyAmount {
@@ -97,6 +103,73 @@ export function computePairwiseBalances(
   }
   out.sort((a, b) =>
     a.currency.localeCompare(b.currency) ||
+    a.fromUserId.localeCompare(b.fromUserId) ||
+    a.toUserId.localeCompare(b.toUserId),
+  );
+  return out;
+}
+
+export interface GroupAttributedPairwiseDebt extends PairwiseDebt {
+  /** Real group id, or null for the direct (non-group) bucket. Never undefined in output. */
+  groupId: string | null;
+}
+
+/**
+ * Who-owes-whom, exactly as incurred, bucketed by (currency, pair, groupId).
+ * Same input and same bump semantics as computePairwiseBalances; each bump
+ * lands in exactly one bucket keyed by the row's own groupId (undefined
+ * treated as null). Zero-net buckets are dropped. Deterministically sorted
+ * (currency ASC, then groupId null-first then ASC, then fromUserId, then
+ * toUserId). Partitions the ledger — never redistributes (ADR-032).
+ */
+export function computePairwiseBalancesByGroup(
+  expenses: readonly LedgerExpense[],
+  settlements: readonly LedgerSettlement[],
+): GroupAttributedPairwiseDebt[] {
+  // outer key: `${currency}|${lowUserId}|${highUserId}` (identical to the
+  // collapsed engine); inner key: groupId (null = direct) -> signed amount
+  // owed by low to high.
+  const ledger = new Map<string, Map<string | null, number>>();
+  const bump = (currency: string, groupId: string | null, from: string, to: string, amount: number) => {
+    const [low, high] = from < to ? [from, to] : [to, from];
+    const signed = from === low ? amount : -amount;
+    const key = `${currency}|${low}|${high}`;
+    let perGroup = ledger.get(key);
+    if (!perGroup) {
+      perGroup = new Map();
+      ledger.set(key, perGroup);
+    }
+    perGroup.set(groupId, (perGroup.get(groupId) ?? 0) + signed);
+  };
+
+  for (const e of expenses) {
+    for (const debt of computePairwiseDebts(e.payers, e.splits)) {
+      bump(e.currency, e.groupId ?? null, debt.fromUserId, debt.toUserId, debt.amount);
+    }
+  }
+  // A settlement from A to B pays down what A owed B — only within its own
+  // groupId's bucket.
+  for (const s of settlements) {
+    bump(s.currency, s.groupId ?? null, s.fromUserId, s.toUserId, -s.amount);
+  }
+
+  const out: GroupAttributedPairwiseDebt[] = [];
+  for (const [key, perGroup] of ledger) {
+    const [currency, low, high] = key.split('|') as [string, string, string];
+    for (const [groupId, signed] of perGroup) {
+      if (signed === 0) continue;
+      out.push(
+        signed > 0
+          ? { currency, groupId, fromUserId: low, toUserId: high, amount: signed }
+          : { currency, groupId, fromUserId: high, toUserId: low, amount: -signed },
+      );
+    }
+  }
+  out.sort((a, b) =>
+    a.currency.localeCompare(b.currency) ||
+    (a.groupId === null
+      ? b.groupId === null ? 0 : -1
+      : b.groupId === null ? 1 : a.groupId.localeCompare(b.groupId)) ||
     a.fromUserId.localeCompare(b.fromUserId) ||
     a.toUserId.localeCompare(b.toUserId),
   );

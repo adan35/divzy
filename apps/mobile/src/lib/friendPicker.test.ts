@@ -15,6 +15,7 @@ function friend(id: string, name: string): FriendDto {
     balancesNative: [],
     balancesConverted: null,
     usedFallbackRates: false,
+    balancesByGroup: [],
     lastActivityAt: null,
   };
 }

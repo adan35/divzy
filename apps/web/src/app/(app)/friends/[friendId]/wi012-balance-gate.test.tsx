@@ -56,6 +56,7 @@ function fixtureFriend(overrides: Partial<FriendDto> = {}): FriendDto {
     balancesNative: [],
     balancesConverted: null,
     usedFallbackRates: false,
+    balancesByGroup: [],
     lastActivityAt: '2026-07-01T00:00:00.000Z',
     ...overrides,
   };

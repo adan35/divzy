@@ -280,7 +280,63 @@ export interface FriendDto {
    * (WI-001 addendum, 2026-07-14).
    */
   usedFallbackRates: boolean;
+  /**
+   * Per-group breakdown of this friend's pairwise net (WI-079, ADR-033).
+   * Each bucket is a per-group (or direct) NONZERO net; buckets MAY exist
+   * even when the friend's overall collapsed net is zero (cross-bucket
+   * cancel: e.g. +100 in one group, -100 in another, same currency — the
+   * top-level balancesNative omits the currency while both buckets are
+   * present and reconcile, absence ≡ 0). [] only when the friend has no
+   * nonzero per-group bucket anywhere; a direct-only friend with an
+   * outstanding balance has exactly one (group: null).
+   * Sorted by bucket magnitude desc (|balancesConverted.amount| + Σ|balances|),
+   * ties broken with the direct (group: null) bucket last, then group name
+   * asc (localeCompare) — deterministic.
+   */
+  balancesByGroup: FriendBalanceBucket[];
   lastActivityAt: string | null;
+}
+
+/**
+ * One per-group (or direct) bucket of the caller↔friend pairwise net (WI-079).
+ * The buckets partition the friend's top-level balancesNative exactly: for
+ * every currency, the sum of every bucket's balancesNative entry equals the
+ * top-level balancesNative entry for that currency. Zero-net buckets are
+ * dropped, mirroring the top-level "zeros dropped" convention.
+ */
+export interface FriendBalanceBucket {
+  /**
+   * The group this bucket's activity belongs to, or null for the non-group/
+   * direct bucket. Mirrors the SettlementDto.group embed (types.ts:203) —
+   * id/name/emoji, no currency — so this introduces no new DTO-shape
+   * convention.
+   */
+  group: { id: string; name: string; emoji: string } | null;
+  /**
+   * Same contract as FriendDto.balances, scoped to this bucket: ONLY the
+   * native entries that could not be converted into balancesConverted (no
+   * resolvable rate); [] in the common case. Positive = the friend owes the
+   * viewer.
+   */
+  balances: CurrencyAmount[];
+  /**
+   * Full signed native per-currency net within this bucket (superset of
+   * balances), zeros dropped, positive = the friend owes the viewer. Sorted
+   * by currency asc, same as FriendDto.balancesNative.
+   */
+  balancesNative: CurrencyAmount[];
+  /**
+   * Sum of this bucket's convertible currencies in the viewer's
+   * defaultCurrency; null when nothing in this bucket was convertible (same
+   * contract as FriendDto.balancesConverted).
+   */
+  balancesConverted: { currency: string; amount: number } | null;
+  /**
+   * True iff at least one of THIS bucket's currencies resolved via the
+   * bundled fallback table (per-bucket attribution — never the blanket
+   * request-level flag; spec-WI-079 Decision D4).
+   */
+  usedFallbackRates: boolean;
 }
 
 /** GET/POST /friends/code(/rotate) response (WI-040). */
@@ -452,7 +508,13 @@ export interface RecurringExpenseDto {
   category: ExpenseCategory;
   splitType: SplitType;
   payers: Array<{ userId: string; amount: number }>;
-  participants: Array<{ userId: string; amount?: number; percentBps?: number; shares?: number; adjustment?: number }>;
+  participants: Array<{
+    userId: string;
+    amount?: number;
+    percentBps?: number;
+    shares?: number;
+    adjustment?: number;
+  }>;
   notes: string | null;
   frequency: RecurrenceFrequency;
   nextRunAt: string;
@@ -515,7 +577,10 @@ export interface ServerToClientEvents {
   'notification:new': (notification: NotificationDto) => void;
   'activity:new': (activity: ActivityDto) => void;
   /** Emitted to group rooms; payload carries groupId so clients can invalidate. */
-  'group:changed': (payload: { groupId: string; kind: 'expense' | 'settlement' | 'member' | 'group' }) => void;
+  'group:changed': (payload: {
+    groupId: string;
+    kind: 'expense' | 'settlement' | 'member' | 'group';
+  }) => void;
   /** Emitted to both parties of a non-group expense/settlement change. */
   'friends:changed': (payload: { userIds: string[] }) => void;
 }

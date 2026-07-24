@@ -241,31 +241,50 @@ export function convert(
  * that map from the bundled fallback table, flagging usedFallbackRates if any
  * patch occurred. Callers then loop convert(amount, itemCurrency, to, rates)
  * synchronously per item — no further I/O. See spec-WI-001 (analytics).
+ *
+ * `fallbackCurrencies` (WI-079, ADR-033 Decision 3 — canonical contract):
+ * UPPERCASED codes of every requested currency whose resolved rate came from
+ * the bundled fallback table — each per-currency patch, plus every requested
+ * currency when the whole base resolution fell back. The viewer's own target
+ * currency is excluded (it never converts). Empty when every rate resolved
+ * live. Purely additive: `rates`/`usedFallbackRates` are unchanged.
  */
 export async function resolveConversionRates(
   to: string,
   extraCurrencies: string[] = [],
-): Promise<{ rates: Record<string, number>; usedFallbackRates: boolean }> {
+): Promise<{
+  rates: Record<string, number>;
+  usedFallbackRates: boolean;
+  fallbackCurrencies: string[];
+}> {
   const toCode = to.toUpperCase();
   const ratesResult = await getRates(toCode);
   const rates: Record<string, number> = { ...ratesResult.rates };
   rates[toCode] = rates[toCode] ?? 1;
 
-  let usedFallbackRates = ratesResult.source === 'fallback';
+  const wholeBaseFallback = ratesResult.source === 'fallback';
+  let usedFallbackRates = wholeBaseFallback;
+  const fallbackCurrencies = new Set<string>();
   let fallbackMap: Record<string, number> | null = null;
   for (const currency of extraCurrencies) {
     const code = currency.toUpperCase();
+    // Whole-base fallback: every requested currency resolves via the bundled
+    // table, except the viewer's own (same-currency conversion short-circuits).
+    if (wholeBaseFallback && code !== toCode) {
+      fallbackCurrencies.add(code);
+    }
     if (rates[code] === undefined) {
       fallbackMap = fallbackMap ?? fallbackRatesFor(toCode);
       const fallbackRate = fallbackMap[code];
       if (fallbackRate !== undefined) {
         rates[code] = fallbackRate;
         usedFallbackRates = true;
+        fallbackCurrencies.add(code);
       }
     }
   }
 
-  return { rates, usedFallbackRates };
+  return { rates, usedFallbackRates, fallbackCurrencies: [...fallbackCurrencies] };
 }
 
 /**

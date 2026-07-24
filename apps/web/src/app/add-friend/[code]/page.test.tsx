@@ -32,6 +32,7 @@ function fixtureFriend(): FriendDto {
     balancesNative: [],
     balancesConverted: null,
     usedFallbackRates: false,
+    balancesByGroup: [],
     lastActivityAt: null,
   };
 }

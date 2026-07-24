@@ -14,6 +14,7 @@ function makeFriend(overrides: Partial<FriendDto> = {}): FriendDto {
     balancesNative: [],
     balancesConverted: null,
     usedFallbackRates: false,
+    balancesByGroup: [],
     lastActivityAt: null,
     ...overrides,
   };
@@ -36,9 +37,15 @@ describe('computeFriendsSummary', () => {
 
   it('mixed directions: youAreOwed/youOwe each equal the sign-restricted sum, net is the difference, never cross-contaminated', () => {
     const friends: FriendDto[] = [
-      makeFriend({ user: user('alex', 'Alex'), balancesConverted: { currency: 'USD', amount: 2000 } }),
+      makeFriend({
+        user: user('alex', 'Alex'),
+        balancesConverted: { currency: 'USD', amount: 2000 },
+      }),
       makeFriend({ user: user('bea', 'Bea'), balancesConverted: { currency: 'USD', amount: 500 } }),
-      makeFriend({ user: user('chris', 'Chris'), balancesConverted: { currency: 'USD', amount: -1200 } }),
+      makeFriend({
+        user: user('chris', 'Chris'),
+        balancesConverted: { currency: 'USD', amount: -1200 },
+      }),
     ];
 
     const summary = computeFriendsSummary(friends);

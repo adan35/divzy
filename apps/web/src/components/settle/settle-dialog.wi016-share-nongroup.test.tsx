@@ -77,6 +77,7 @@ function fixtureFriend(u: UserDto): FriendDto {
     balancesNative: [{ currency: 'USD', amount: -3000 }],
     balancesConverted: null,
     usedFallbackRates: false,
+    balancesByGroup: [],
     lastActivityAt: null,
   };
 }
