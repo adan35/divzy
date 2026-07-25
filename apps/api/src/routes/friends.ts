@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import {
   computePairwiseBalances,
   computePairwiseBalancesByGroup,
+  computePairwiseDebts,
   formatMoney,
   zAddFriendByCodeInput,
   zAddFriendInput,
@@ -13,6 +14,8 @@ import {
   type FriendCodeDto,
   type FriendDto,
   type GroupAttributedPairwiseDebt,
+  type LedgerExpense,
+  type LedgerSettlement,
 } from '@divzy/shared';
 import { recordActivity } from '../lib/activity';
 import { convertBalanceForViewer, type ConvertedBalance } from '../lib/balance-conversion';
@@ -138,6 +141,49 @@ function toGroupLabelMap(rows: Array<{ group: GroupLabel }>): Map<string, GroupL
 }
 
 /**
+ * WI-080 (ADR-034): pure route-side count helper. Counts non-deleted
+ * expense/settlement rows that contribute to the caller↔friend pairwise ledger
+ * for a single bucket (groupId or null), using the same raw ledger arrays the
+ * route already holds in memory. Mirrors the engine's bump scoping exactly:
+ * a row is counted in the bucket keyed by its own groupId (undefined treated as
+ * null). Counts are BEFORE zero-net bucket drop, so surviving buckets keep
+ * their real counts and dropped buckets are never rendered.
+ */
+function countCompositionForBucket(
+  callerId: string,
+  friendId: string,
+  groupId: string | null,
+  expenses: readonly LedgerExpense[],
+  settlements: readonly LedgerSettlement[],
+): { expenseCount: number; settlementCount: number } {
+  let expenseCount = 0;
+  for (const e of expenses) {
+    if ((e.groupId ?? null) !== groupId) continue;
+    const debts = computePairwiseDebts(e.payers, e.splits);
+    if (
+      debts.some(
+        (d) =>
+          (d.fromUserId === callerId && d.toUserId === friendId) ||
+          (d.fromUserId === friendId && d.toUserId === callerId),
+      )
+    ) {
+      expenseCount += 1;
+    }
+  }
+  let settlementCount = 0;
+  for (const s of settlements) {
+    if ((s.groupId ?? null) !== groupId) continue;
+    if (
+      (s.fromUserId === callerId && s.toUserId === friendId) ||
+      (s.fromUserId === friendId && s.toUserId === callerId)
+    ) {
+      settlementCount += 1;
+    }
+  }
+  return { expenseCount, settlementCount };
+}
+
+/**
  * WI-079 (spec §4 C4, ADR-033 Decision 1): build the per-(group|direct)
  * buckets for one (caller, friend) pair from the group-attributed pairwise
  * engine output. Same sign convention as the top-level computation
@@ -158,6 +204,8 @@ function buildFriendBuckets(
   viewerCurrency: string,
   rates: Record<string, number>,
   fallbackCurrencies: string[],
+  expenses: readonly LedgerExpense[],
+  settlements: readonly LedgerSettlement[],
 ): FriendBalanceBucket[] {
   const perGroup = new Map<string | null, Map<string, number>>();
   for (const debt of pairwiseByGroup) {
@@ -182,6 +230,13 @@ function buildFriendBuckets(
       .sort((a, b) => a.currency.localeCompare(b.currency));
     if (balancesNative.length === 0) continue; // settled bucket never renders
     const { converted, leftovers } = convertBalanceForViewer(balancesNative, viewerCurrency, rates);
+    const { expenseCount, settlementCount } = countCompositionForBucket(
+      callerId,
+      friendId,
+      groupId,
+      expenses,
+      settlements,
+    );
     buckets.push({
       group:
         groupId === null
@@ -193,6 +248,8 @@ function buildFriendBuckets(
       usedFallbackRates: balancesNative.some((b) =>
         fallbackCurrencies.includes(b.currency.toUpperCase()),
       ),
+      expenseCount,
+      settlementCount,
     });
   }
 
@@ -394,6 +451,8 @@ async function computeFriendDto(
       viewerCurrency,
       rates,
       fallbackCurrencies,
+      expenses,
+      settlements,
     ),
     lastActivityAt: lastActivity.toISOString(),
   };
@@ -532,6 +591,8 @@ async function computeFriendsList(userId: string): Promise<FriendDto[]> {
         user.defaultCurrency,
         rates,
         fallbackCurrencies,
+        expenses,
+        settlements,
       ),
       lastActivityAt: lastActivity.toISOString(),
     };

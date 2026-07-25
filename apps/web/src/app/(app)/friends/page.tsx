@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { ChevronRight, QrCode, RefreshCw, UserPlus } from 'lucide-react';
+import { ChevronRight, Minus, Plus, QrCode, RefreshCw, UserPlus } from 'lucide-react';
 import { matchesBalanceFilter, type BalanceFilter, type FriendDto } from '@divzy/shared';
 import { useFriends, errorMessage } from '@/lib/hooks';
 import { collapsedBalanceEntries } from '@/lib/balance-display';
@@ -98,24 +98,26 @@ function FriendRow({ friend }: { friend: FriendDto }) {
             </div>
           )}
         </Link>
-        {canExpand && (
+        {canExpand ? (
           <button
             type="button"
             aria-expanded={expanded}
-            aria-label="Show per-group breakdown"
-            onClick={() => setExpanded((v) => !v)}
-            className="shrink-0 rounded-md p-1 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+            aria-label={expanded ? 'Hide per-group breakdown' : 'Show per-group breakdown'}
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded((v) => !v);
+            }}
+            className="shrink-0 rounded-md p-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
           >
-            <ChevronRight
-              className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')}
-              aria-hidden="true"
-            />
+            {expanded ? (
+              <Minus className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Plus className="h-4 w-4" aria-hidden="true" />
+            )}
           </button>
+        ) : (
+          <ChevronRight className="mx-2 h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
         )}
-        {/* The decorative navigation chevron moved out of the Link (WI-079):
-            interactive elements cannot nest inside an anchor, so the expand
-            toggle sits immediately before it as a sibling. */}
-        <ChevronRight className="ml-1 h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
       </div>
       {canExpand && expanded && <FriendBalanceBreakdown friend={friend} />}
     </div>

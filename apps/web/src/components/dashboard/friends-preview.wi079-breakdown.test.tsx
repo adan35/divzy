@@ -29,6 +29,7 @@ vi.mock('@/components/settle/settle-dialog', () => ({
 import { FriendsPreview } from './friends-preview';
 
 const TOGGLE_NAME = /show per-group breakdown/i;
+const DIRECT_LABEL = 'Direct (outside groups)';
 
 function fixtureFriend(overrides: Partial<FriendDto> = {}): FriendDto {
   return {
@@ -75,6 +76,12 @@ function textMatcher(expected: string) {
   };
 }
 
+function bucketLinkFor(label: string): HTMLElement {
+  const el = screen.getByRole('link', { name: new RegExp(label, 'i') });
+  if (!el) throw new Error(`could not find bucket link for "${label}"`);
+  return el as HTMLElement;
+}
+
 function setup(friends: FriendDto[]) {
   useAuthMock.mockReturnValue({ user: fixtureMe() });
   useFriendsMock.mockReturnValue({ isPending: false, isError: false, data: friends });
@@ -114,14 +121,14 @@ describe('FriendsPreview — per-group balance breakdown (spec-WI-079 §6.2)', (
 
     const toggle = screen.getByRole('button', { name: TOGGLE_NAME });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByText('🧳 Trip to Rome')).not.toBeInTheDocument();
-    expect(screen.queryByText('Direct expenses')).not.toBeInTheDocument();
+    expect(screen.queryByText(/🧳 Trip to Rome/)).not.toBeInTheDocument();
+    expect(screen.queryByText(DIRECT_LABEL)).not.toBeInTheDocument();
 
     await user.click(toggle);
 
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('🧳 Trip to Rome')).toBeInTheDocument();
-    expect(screen.getByText('Direct expenses')).toBeInTheDocument();
+    expect(screen.getByText(/🧳 Trip to Rome/)).toBeInTheDocument();
+    expect(screen.getByText(DIRECT_LABEL)).toBeInTheDocument();
     expect(screen.getByText(textMatcher('Sam owes you £39.54'))).toBeInTheDocument();
     expect(screen.getByText(textMatcher('You owe Sam £7.91'))).toBeInTheDocument();
   });

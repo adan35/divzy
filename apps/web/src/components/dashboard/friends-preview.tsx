@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Minus, Plus } from 'lucide-react';
 import type { FriendDto } from '@divzy/shared';
 import { useFriends } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth-store';
@@ -94,19 +94,25 @@ export function FriendRow({ friend, onClick }: { friend: FriendDto; onClick?: ()
             )}
           </div>
         </button>
-        {canExpand && (
+        {canExpand ? (
           <button
             type="button"
             aria-expanded={expanded}
-            aria-label="Show per-group breakdown"
-            onClick={() => setExpanded((v) => !v)}
-            className="shrink-0 rounded-md p-1 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
+            aria-label={expanded ? 'Hide per-group breakdown' : 'Show per-group breakdown'}
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded((v) => !v);
+            }}
+            className="shrink-0 rounded-md p-2 text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink"
           >
-            <ChevronRight
-              className={cn('h-4 w-4 transition-transform', expanded && 'rotate-90')}
-              aria-hidden="true"
-            />
+            {expanded ? (
+              <Minus className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Plus className="h-4 w-4" aria-hidden="true" />
+            )}
           </button>
+        ) : (
+          <ChevronRight className="mx-2 h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
         )}
       </div>
       {canExpand && expanded && <FriendBalanceBreakdown friend={friend} />}

@@ -337,6 +337,36 @@ export interface FriendBalanceBucket {
    * request-level flag; spec-WI-079 Decision D4).
    */
   usedFallbackRates: boolean;
+
+  /**
+   * WI-080. Count of non-deleted expense records attributed to this bucket's
+   * groupId (or `null` for the direct bucket) that contribute to the
+   * caller↔friend pairwise ledger, counted BEFORE zero-net bucket drop.
+   *
+   * Direct bucket (`group: null`) counts only direct (`groupId: null`) expenses
+   * between the caller and friend. A group bucket counts only expenses whose
+   * `groupId` matches that group and that produce at least one caller↔friend
+   * pairwise debt.
+   *
+   * Optional additive. Existing consumers that do not read this field are
+   * unaffected. The field is populated by `friends.ts` for every bucket; clients
+   * may treat its absence as "no composition hint available."
+   */
+  expenseCount?: number;
+
+  /**
+   * WI-080. Count of non-deleted settlement records attributed to this bucket's
+   * groupId (or `null` for the direct bucket) that contribute to the
+   * caller↔friend pairwise ledger, counted BEFORE zero-net bucket drop.
+   *
+   * Direct bucket counts only direct settlements between caller and friend. A
+   * group bucket counts only settlements whose `groupId` matches that group and
+   * that have the caller and friend as the two parties.
+   *
+   * Optional additive. Existing consumers that do not read this field are
+   * unaffected.
+   */
+  settlementCount?: number;
 }
 
 /** GET/POST /friends/code(/rotate) response (WI-040). */

@@ -2,7 +2,7 @@
 //
 // Covers the story-WI-079 web scenarios: collapsed-by-default chevron toggle
 // (NEVER an overloaded row tap — the row Link keeps its navigation), one
-// ledger line per bucket with group emoji+name / "Direct expenses" copy,
+// ledger line per bucket with group emoji+name / "Direct (outside groups)" copy,
 // signed you-owe/owes-you phrasing per bucket, ≤1-bucket affordance
 // suppression (D11 — governed by bucket count, never the friend's settled
 // state), >5-bucket "+N more groups" in-expansion overflow toggle (D10), and
@@ -27,6 +27,7 @@ vi.mock('@/lib/hooks', () => ({
 const mockedUseFriends = vi.mocked(useFriends);
 
 const TOGGLE_NAME = /show per-group breakdown/i;
+const DIRECT_LABEL = 'Direct (outside groups)';
 
 function fixtureFriend(overrides: Partial<FriendDto> = {}): FriendDto {
   return {
@@ -72,9 +73,10 @@ function rowLinkFor(name: string): HTMLElement {
   return link as HTMLElement;
 }
 
-/** The expanded bucket line containing a given label (label <p>'s parent). */
+/** The expanded bucket line containing a given label (matched by its aria-label). */
 function bucketLineFor(label: string): HTMLElement {
-  const el = screen.getByText(label).parentElement;
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const el = screen.getByRole('link', { name: new RegExp(escaped, 'i') });
   if (!el) throw new Error(`could not find bucket line for "${label}"`);
   return el as HTMLElement;
 }
@@ -126,13 +128,13 @@ describe('FriendsPage — per-group balance breakdown (spec-WI-079 §6.1)', () =
 
     const toggle = screen.getByRole('button', { name: TOGGLE_NAME });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByText('🧳 Trip to Rome')).not.toBeInTheDocument();
-    expect(screen.queryByText('Direct expenses')).not.toBeInTheDocument();
+    expect(screen.queryByText(/🧳 Trip to Rome/)).not.toBeInTheDocument();
+    expect(screen.queryByText(DIRECT_LABEL, { exact: false })).not.toBeInTheDocument();
     // The collapsed row itself is untouched — still a link to friend detail.
     expect(rowLinkFor('Priya Owe')).toHaveAttribute('href', '/friends/friend-1');
   });
 
-  it('expanding renders one ledger line per bucket: group label, signed direction phrasing, and the "Direct expenses" direct bucket', async () => {
+  it('expanding renders one ledger line per bucket: group label, signed direction phrasing, and the "Direct (outside groups)" direct bucket', async () => {
     const user = userEvent.setup();
     setup([twoBucketFriend()]);
     render(<FriendsPage />);
@@ -141,21 +143,21 @@ describe('FriendsPage — per-group balance breakdown (spec-WI-079 §6.1)', () =
     await user.click(toggle);
 
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    // D7: the chevron rotates 90° when expanded (balances-view.tsx pattern).
-    expect(toggle.querySelector('svg')).toHaveClass('rotate-90');
+    // D7: the plus/minus icon swaps when expanded.
+    expect(toggle.querySelector('svg')).toHaveClass('lucide-minus');
 
-    const groupLine = bucketLineFor('🧳 Trip to Rome');
+    const groupLine = bucketLineFor('Trip to Rome');
     expect(within(groupLine).getByText(textMatcher('Priya owes you $20.00'))).toBeInTheDocument();
 
-    const directLine = bucketLineFor('Direct expenses');
+    const directLine = bucketLineFor(DIRECT_LABEL);
     // D8: direct bucket carries no emoji and the secondary text-ink-3 styling.
-    expect(screen.getByText('Direct expenses')).toHaveClass('text-ink-3');
+    expect(screen.getByText(DIRECT_LABEL, { exact: false })).toHaveClass('text-ink-3');
     expect(within(directLine).getByText(textMatcher('You owe Priya $5.00'))).toBeInTheDocument();
 
     // Collapsing again hides the breakdown.
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByText('🧳 Trip to Rome')).not.toBeInTheDocument();
+    expect(screen.queryByText(/🧳 Trip to Rome/)).not.toBeInTheDocument();
   });
 
   it('a zero-bucket friend renders exactly as today — no toggle, no breakdown', () => {
@@ -183,7 +185,7 @@ describe('FriendsPage — per-group balance breakdown (spec-WI-079 §6.1)', () =
     render(<FriendsPage />);
 
     expect(screen.queryByRole('button', { name: TOGGLE_NAME })).not.toBeInTheDocument();
-    expect(screen.queryByText('🧳 Trip to Rome')).not.toBeInTheDocument();
+    expect(screen.queryByText(/🧳 Trip to Rome/)).not.toBeInTheDocument();
   });
 
   it('a cross-bucket-cancel friend (collapsed net ZERO) keeps the toggle and both nonzero bucket lines while the row still reads "Settled up" (D11/R3)', async () => {
@@ -216,8 +218,8 @@ describe('FriendsPage — per-group balance breakdown (spec-WI-079 §6.1)', () =
     expect(within(rowLinkFor('Priya Owe')).getByText('Settled up')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: TOGGLE_NAME }));
-    expect(within(bucketLineFor('🏠 Alpha Group')).getByText(textMatcher('Priya owes you $10.00'))).toBeInTheDocument();
-    expect(within(bucketLineFor('🎿 Beta Group')).getByText(textMatcher('You owe Priya $10.00'))).toBeInTheDocument();
+    expect(within(bucketLineFor('Alpha Group')).getByText(textMatcher('Priya owes you $10.00'))).toBeInTheDocument();
+    expect(within(bucketLineFor('Beta Group')).getByText(textMatcher('You owe Priya $10.00'))).toBeInTheDocument();
   });
 
   it('>5 buckets renders the first 4 plus a "+N more groups" in-expansion toggle that reveals the rest (D10)', async () => {
@@ -278,9 +280,9 @@ describe('FriendsPage — per-group balance breakdown (spec-WI-079 §6.1)', () =
 
     await user.click(screen.getByRole('button', { name: TOGGLE_NAME }));
 
-    const flaggedLine = bucketLineFor('🧳 Trip to Rome');
+    const flaggedLine = bucketLineFor('Trip to Rome');
     expect(within(flaggedLine).getByText('est. rate')).toBeInTheDocument();
-    const directLine = bucketLineFor('Direct expenses');
+    const directLine = bucketLineFor(DIRECT_LABEL);
     expect(within(directLine).queryByText('est. rate')).not.toBeInTheDocument();
     // Exactly one notice across the whole surface.
     expect(screen.getAllByText('est. rate')).toHaveLength(1);
