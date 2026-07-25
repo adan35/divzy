@@ -83,11 +83,11 @@ function bucketLinkFor(label: string): HTMLElement {
   return el as HTMLElement;
 }
 
-/** Tree-line prefix span for a bucket label. */
-function prefixFor(label: string): HTMLElement {
+/** Decorative tree connector for a bucket label. */
+function connectorFor(label: string): HTMLElement {
   const link = bucketLinkFor(label);
-  const span = link.querySelector('p > span.font-mono');
-  if (!span) throw new Error(`could not find prefix span for "${label}"`);
+  const span = link.querySelector('[data-testid="tree-connector"]');
+  if (!span) throw new Error(`could not find tree connector for "${label}"`);
   return span as HTMLElement;
 }
 
@@ -337,7 +337,7 @@ describe('FriendsPage — WI-080 per-group breakdown UX fixes', () => {
     expect(screen.getByRole('button', { name: HIDE_LABEL })).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('tree-line prefixes: non-last lines use ├─ and the last visible line uses └─', async () => {
+  it('tree-line connectors: non-last lines use mid and the last visible line uses terminal', async () => {
     const user = userEvent.setup();
     setup([
       fixtureFriend({
@@ -363,12 +363,16 @@ describe('FriendsPage — WI-080 per-group breakdown UX fixes', () => {
     render(<FriendsPage />);
     await user.click(screen.getByRole('button', { name: SHOW_LABEL }));
 
-    expect(prefixFor('Alpha').textContent).toBe('├─ ');
-    expect(prefixFor('Beta').textContent).toBe('├─ ');
-    expect(prefixFor('Gamma').textContent).toBe('└─ ');
+    const panel = connectorFor('Alpha').closest('div');
+    expect(panel?.textContent).not.toMatch(/[├└─|_]/);
+    expect(panel?.querySelector('.font-mono')).toBeNull();
+
+    expect(connectorFor('Alpha')).toHaveAttribute('data-connector', 'mid');
+    expect(connectorFor('Beta')).toHaveAttribute('data-connector', 'mid');
+    expect(connectorFor('Gamma')).toHaveAttribute('data-connector', 'terminal');
   });
 
-  it('truncation boundary: 6 buckets shows first 4, the 4th is └─, then a +2 more toggle', async () => {
+  it('truncation boundary: 6 buckets shows first 4, the 4th is mid, overflow toggle is terminal', async () => {
     const user = userEvent.setup();
     const buckets = Array.from({ length: 6 }, (_, i) =>
       fixtureBucket({
@@ -381,13 +385,18 @@ describe('FriendsPage — WI-080 per-group breakdown UX fixes', () => {
     render(<FriendsPage />);
     await user.click(screen.getByRole('button', { name: SHOW_LABEL }));
 
-    for (const n of [1, 2, 3]) {
-      expect(prefixFor(`Group ${n}`).textContent).toBe('├─ ');
+    for (const n of [1, 2, 3, 4]) {
+      expect(connectorFor(`Group ${n}`)).toHaveAttribute('data-connector', 'mid');
     }
-    expect(prefixFor('Group 4').textContent).toBe('└─ ');
     expect(screen.queryByText(/Group 5/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Group 6/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '+2 more groups' })).toBeInTheDocument();
+
+    const toggle = screen.getByRole('button', { name: '+2 more groups' });
+    expect(toggle).toBeInTheDocument();
+    expect(within(toggle).getByTestId('tree-connector')).toHaveAttribute(
+      'data-connector',
+      'terminal',
+    );
   });
 
   it('group bucket lines link to /groups/[id] and direct line links to /friends/[friendId]', async () => {

@@ -69,7 +69,7 @@ describe('FriendsPage — D10 overflow boundary at exactly 5 buckets (WI-079, te
     vi.clearAllMocks();
   });
 
-  it('exactly 5 buckets renders all five lines with no "+N more groups" toggle', async () => {
+  it('exactly 5 buckets renders all five lines with no "+N more groups" toggle and the 5th line terminal', async () => {
     const user = userEvent.setup();
     const buckets = Array.from({ length: 5 }, (_, i) =>
       fixtureBucket({
@@ -87,5 +87,12 @@ describe('FriendsPage — D10 overflow boundary at exactly 5 buckets (WI-079, te
       expect(screen.getByText(`👥 Group ${n}`)).toBeInTheDocument();
     }
     expect(screen.queryByRole('button', { name: /more groups/ })).not.toBeInTheDocument();
+
+    const connectors = screen.getAllByTestId('tree-connector');
+    expect(connectors).toHaveLength(5);
+    connectors.slice(0, 4).forEach((connector) => {
+      expect(connector).toHaveAttribute('data-connector', 'mid');
+    });
+    expect(connectors[4]).toHaveAttribute('data-connector', 'terminal');
   });
 });

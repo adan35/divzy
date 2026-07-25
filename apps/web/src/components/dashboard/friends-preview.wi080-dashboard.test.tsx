@@ -81,10 +81,10 @@ function bucketLinkFor(label: string): HTMLElement {
   return el as HTMLElement;
 }
 
-function prefixFor(label: string): HTMLElement {
+function connectorFor(label: string): HTMLElement {
   const link = bucketLinkFor(label);
-  const span = link.querySelector('p > span.font-mono');
-  if (!span) throw new Error(`could not find prefix span for "${label}"`);
+  const span = link.querySelector('[data-testid="tree-connector"]');
+  if (!span) throw new Error(`could not find tree connector for "${label}"`);
   return span as HTMLElement;
 }
 
@@ -165,14 +165,18 @@ describe('FriendsPreview — WI-080 per-group breakdown UX fixes', () => {
     expect(row.querySelector('svg')).toHaveClass('lucide-chevron-right');
   });
 
-  it('tree-line prefixes render and the last visible line uses └─', async () => {
+  it('tree-line connectors render and the last visible line uses terminal', async () => {
     const user = userEvent.setup();
     setup([twoBucketFriend()]);
     render(<FriendsPreview />);
     await user.click(screen.getByRole('button', { name: SHOW_LABEL }));
 
-    expect(prefixFor('Trip to Rome').textContent).toBe('├─ ');
-    expect(prefixFor(DIRECT_LABEL).textContent).toBe('└─ ');
+    const panel = connectorFor('Trip to Rome').closest('div');
+    expect(panel?.textContent).not.toMatch(/[├└─|_]/);
+    expect(panel?.querySelector('.font-mono')).toBeNull();
+
+    expect(connectorFor('Trip to Rome')).toHaveAttribute('data-connector', 'mid');
+    expect(connectorFor(DIRECT_LABEL)).toHaveAttribute('data-connector', 'terminal');
   });
 
   it('bucket lines link to /groups/[id] and /friends/[friendId]', async () => {

@@ -16,6 +16,30 @@ function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] ?? name;
 }
 
+function TreeConnector({
+  isLast,
+  className,
+}: {
+  isLast: boolean;
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      data-testid="tree-connector"
+      data-connector={isLast ? 'terminal' : 'mid'}
+      className={cn(
+        'relative inline-block shrink-0 border-hairline',
+        'w-5',
+        isLast
+          ? 'self-stretch border-l border-b rounded-bl-[4px]'
+          : 'self-stretch border-l border-b',
+        className,
+      )}
+    />
+  );
+}
+
 function defaultCompositionHint(bucket: FriendBalanceBucket): string | null {
   const expenseCount = bucket.expenseCount ?? 0;
   const settlementCount = bucket.settlementCount ?? 0;
@@ -89,23 +113,21 @@ function BucketLine({
       href={href}
       aria-label={ariaLabel}
       onClick={(e) => e.stopPropagation()}
-      className="flex items-start justify-between gap-3 py-2 hover:bg-surface-2"
+      className="flex items-stretch justify-between gap-3 py-2 hover:bg-surface-2"
     >
-      <div className="min-w-0 flex-1">
-        <p
-          className={cn(
-            'truncate text-[13px]',
-            bucket.group ? 'text-ink-2' : 'text-ink-3',
-          )}
-        >
-          <span className="inline-block w-[1.75em] shrink-0 font-mono text-ink-3">
-            {isLast ? '└─ ' : '├─ '}
-          </span>
-          {label}
-        </p>
-        {hint && (
-          <p className="pl-[1.75em] text-[11px] text-ink-3">{hint}</p>
-        )}
+      <div className="flex min-w-0 flex-1 items-stretch gap-1.5">
+        <TreeConnector isLast={isLast} />
+        <div className="min-w-0 flex-1">
+          <p
+            className={cn(
+              'truncate text-[13px]',
+              bucket.group ? 'text-ink-2' : 'text-ink-3',
+            )}
+          >
+            {label}
+          </p>
+          {hint && <p className="text-[11px] text-ink-3">{hint}</p>}
+        </div>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-0.5 tabular-nums">
         {visible.map((b) => (
@@ -161,7 +183,7 @@ export function FriendBalanceBreakdown({
           key={bucket.group?.id ?? 'direct'}
           bucket={bucket}
           friend={friend}
-          isLast={index === visible.length - 1}
+          isLast={hidden === 0 && index === visible.length - 1}
           directBucketLabel={directBucketLabel}
           buildBucketHref={buildBucketHref}
           renderCompositionHint={renderCompositionHint}
@@ -174,9 +196,10 @@ export function FriendBalanceBreakdown({
             e.stopPropagation();
             setShowAll(true);
           }}
-          className="block w-full py-2 text-left text-[13px] font-medium text-ink-3 transition-colors hover:text-ink"
+          className="flex w-full items-stretch gap-1.5 py-2 text-left text-[13px] font-medium text-ink-3 transition-colors hover:text-ink"
         >
-          +{hidden} more groups
+          <TreeConnector isLast />
+          <span>+{hidden} more groups</span>
         </button>
       )}
     </div>
