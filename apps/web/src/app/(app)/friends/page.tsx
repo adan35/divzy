@@ -56,6 +56,10 @@ function FriendRow({ friend }: { friend: FriendDto }) {
   // keeps the affordance; ≤1 bucket suppresses it (it would duplicate the row).
   const [expanded, setExpanded] = useState(false);
   const canExpand = friend.balancesByGroup.length > 1;
+  // WI-083: the decorative ChevronRight is suppressed for fully-settled rows;
+  // canExpand still gates the plus/minus toggle so cross-bucket-cancel rows
+  // (net zero with ≥2 buckets) keep their expand affordance.
+  const isSettled = !primary;
 
   return (
     <div>
@@ -115,8 +119,10 @@ function FriendRow({ friend }: { friend: FriendDto }) {
               <Plus className="h-4 w-4" aria-hidden="true" />
             )}
           </button>
-        ) : (
+        ) : !isSettled ? (
           <ChevronRight className="mx-2 h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+        ) : (
+          <span aria-hidden="true" className="mx-2 h-4 w-4 shrink-0" />
         )}
       </div>
       {canExpand && expanded && <FriendBalanceBreakdown friend={friend} />}

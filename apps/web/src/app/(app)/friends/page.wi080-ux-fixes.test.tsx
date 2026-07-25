@@ -290,6 +290,8 @@ describe('FriendsPage — WI-080 per-group breakdown UX fixes', () => {
   it('single-bucket rows keep only the chevron-right navigation affordance and no expand toggle', () => {
     setup([
       fixtureFriend({
+        balancesNative: [{ currency: 'USD', amount: 100 }],
+        balancesConverted: { currency: 'USD', amount: 100 },
         balancesByGroup: [
           fixtureBucket({
             group: { id: 'g1', name: 'Only Group', emoji: '1' },

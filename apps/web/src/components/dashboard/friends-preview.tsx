@@ -45,6 +45,10 @@ export function FriendRow({ friend, onClick }: { friend: FriendDto; onClick?: ()
   // only: ≤1 bucket suppresses it, never the friend's settled state.
   const [expanded, setExpanded] = useState(false);
   const canExpand = friend.balancesByGroup.length > 1;
+  // WI-083: suppress the decorative ChevronRight on fully-settled rows while
+  // keeping the plus/minus toggle for any row with ≥2 buckets (including cross-
+  // bucket-cancel rows whose collapsed net is zero).
+  const isSettled = entries.length === 0;
 
   return (
     <div>
@@ -111,8 +115,10 @@ export function FriendRow({ friend, onClick }: { friend: FriendDto; onClick?: ()
               <Plus className="h-4 w-4" aria-hidden="true" />
             )}
           </button>
-        ) : (
+        ) : !isSettled ? (
           <ChevronRight className="mx-2 h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+        ) : (
+          <span aria-hidden="true" className="mx-2 h-4 w-4 shrink-0" />
         )}
       </div>
       {canExpand && expanded && <FriendBalanceBreakdown friend={friend} />}

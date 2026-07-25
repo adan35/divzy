@@ -146,6 +146,8 @@ describe('FriendsPreview — WI-080 per-group breakdown UX fixes', () => {
   it('single-bucket rows keep the chevron-right affordance and suppress the expand toggle', () => {
     setup([
       fixtureFriend({
+        balancesNative: [{ currency: 'USD', amount: 100 }],
+        balancesConverted: { currency: 'GBP', amount: 79 },
         balancesByGroup: [
           fixtureBucket({
             group: { id: 'g1', name: 'Only Group', emoji: '1' },
