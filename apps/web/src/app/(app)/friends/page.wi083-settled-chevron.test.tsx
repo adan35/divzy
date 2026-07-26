@@ -18,6 +18,32 @@ vi.mock('@/lib/hooks', () => ({
   useFriendCode: vi.fn(),
   useRotateFriendCode: vi.fn(),
   errorMessage: () => 'error',
+  useGroup: vi.fn(() => ({ data: undefined, isLoading: false, isError: false, error: null })),
+  useGroupBalances: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+  useCreateSettlement: vi.fn(() => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+    isSuccess: false,
+    error: null,
+    reset: vi.fn(),
+  })),
+  useUploadReceipt: vi.fn(() => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+    isSuccess: false,
+    error: null,
+    reset: vi.fn(),
+  })),
 }));
 
 const mockedUseFriends = vi.mocked(useFriends);

@@ -14,6 +14,7 @@ import { MoneyText } from '@/components/ui/money-text';
 import { SkeletonList } from '@/components/ui/skeleton';
 import { ManualRatePrompts } from '@/components/settle/manual-rate-prompt';
 import { SettleUpDialog, type SettleUpPrefill } from '@/components/settle/settle-dialog';
+import { GroupMemberSettlements } from './group-member-settlements';
 
 export interface BalancesViewProps {
   groupId: string;
@@ -165,6 +166,15 @@ export function BalancesView({ groupId }: BalancesViewProps) {
   return (
     <div className="space-y-6">
       {data.usedFallbackRates && <FallbackRatesNotice />}
+
+      {me && (
+        <GroupMemberSettlements
+          groupId={groupId}
+          data={data}
+          meId={me.id}
+          onSettleUp={(prefill) => setSettle({ prefill })}
+        />
+      )}
 
       {/* Per-member nets — collapsed to one converted figure (WI-001) */}
       <Card className="divide-y divide-hairline">
@@ -344,7 +354,7 @@ export function BalancesView({ groupId }: BalancesViewProps) {
             Exact debts as incurred ({data.pairwise.length})
           </button>
           {showExact && (
-            <Card className="divide-y divide-hairline">
+            <Card className="divide-y divide-hairline" data-testid="exact-debts">
               {data.pairwise.map((d) => (
                 <div
                   key={`${d.currency}-${d.fromUserId}-${d.toUserId}`}

@@ -83,7 +83,9 @@ function bucketLinkFor(label: string): HTMLElement {
 
 function connectorFor(label: string): HTMLElement {
   const link = bucketLinkFor(label);
-  const span = link.querySelector('[data-testid="tree-connector"]');
+  const container = link.parentElement?.parentElement;
+  if (!container) throw new Error(`could not find bucket container for "${label}"`);
+  const span = container.querySelector('[data-testid="tree-connector"]');
   if (!span) throw new Error(`could not find tree connector for "${label}"`);
   return span as HTMLElement;
 }

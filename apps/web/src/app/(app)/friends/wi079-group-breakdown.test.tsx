@@ -22,6 +22,32 @@ vi.mock('@/lib/hooks', () => ({
   useFriendCode: vi.fn(),
   useRotateFriendCode: vi.fn(),
   errorMessage: () => 'error',
+  useGroup: vi.fn(() => ({ data: undefined, isLoading: false, isError: false, error: null })),
+  useGroupBalances: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+  useCreateSettlement: vi.fn(() => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+    isSuccess: false,
+    error: null,
+    reset: vi.fn(),
+  })),
+  useUploadReceipt: vi.fn(() => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+    isSuccess: false,
+    error: null,
+    reset: vi.fn(),
+  })),
 }));
 
 const mockedUseFriends = vi.mocked(useFriends);
@@ -73,12 +99,19 @@ function rowLinkFor(name: string): HTMLElement {
   return link as HTMLElement;
 }
 
-/** The expanded bucket line containing a given label (matched by its aria-label). */
+/** The expanded bucket row containing a given label. */
 function bucketLineFor(label: string): HTMLElement {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const el = screen.getByRole('link', { name: new RegExp(escaped, 'i') });
-  if (!el) throw new Error(`could not find bucket line for "${label}"`);
-  return el as HTMLElement;
+  // WI-084: group buckets always keep a nav link; the direct bucket does not
+  // on the Friends page (showDirectBucketLink={false}). Prefer the link when
+  // present, otherwise fall back to the label text and bucket container.
+  const link = screen.queryByRole('link', { name: new RegExp(escaped, 'i') });
+  if (link) return link.parentElement?.parentElement as HTMLElement;
+
+  const textEl = screen.getByText(label, { exact: false });
+  const container = textEl.closest('[class*="group flex flex-col"]');
+  if (!container) throw new Error(`could not find bucket line for "${label}"`);
+  return container as HTMLElement;
 }
 
 function setup(friends: FriendDto[]) {

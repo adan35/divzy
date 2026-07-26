@@ -1,4 +1,4 @@
-import type { FriendDto } from '@divzy/shared';
+import type { CurrencyAmount, FriendBalanceBucket, FriendDto, PublicUserDto } from '@divzy/shared';
 import type { SettleUpPrefill } from '@/components/settle/settle-dialog';
 import { friendHasNothingOutstanding } from '@/lib/balance-display';
 
@@ -80,4 +80,74 @@ export function friendSettleIntent(
   }
 
   return { disabled: nothingOutstanding, prefill };
+}
+
+/** WI-084: one-tap settle-up intent for a single displayed bucket line. */
+export interface BucketSettleIntent {
+  /** Omitted for the direct (null-group) bucket. */
+  groupId?: string;
+  prefill: SettleUpPrefill;
+}
+
+/**
+ * WI-084: derive a `SettleUpDialog` prefill from a displayed bucket line.
+ *
+ * The `line` is one entry from `collapsedBalanceEntries(bucket.balancesConverted,
+ * bucket.balances)` — the exact amount/currency the user tapped. Direction follows
+ * the viewer-signed convention: positive = counterparty owes viewer, negative =
+ * viewer owes counterparty. The returned `groupId` is set for group buckets and
+ * omitted for the direct bucket, scoping the settlement correctly.
+ */
+export function bucketSettleIntent(
+  bucket: FriendBalanceBucket,
+  line: CurrencyAmount,
+  friend: FriendDto,
+  me: SettleActor,
+): BucketSettleIntent {
+  const counterpartyId = friend.user.id;
+  const amount = Math.abs(line.amount);
+  const prefill: SettleUpPrefill =
+    line.amount > 0
+      ? {
+          fromUserId: counterpartyId,
+          toUserId: me.id,
+          amount,
+          currency: line.currency,
+        }
+      : {
+          fromUserId: me.id,
+          toUserId: counterpartyId,
+          amount,
+          currency: line.currency,
+        };
+  return {
+    groupId: bucket.group?.id,
+    prefill,
+  };
+}
+
+/**
+ * WI-084: derive a `SettleUpDialog` prefill from a displayed group-panel line.
+ *
+ * `line` is a caller-relative `CurrencyAmount` (positive = member owes viewer).
+ */
+export function groupMemberSettleIntent(
+  member: PublicUserDto,
+  line: CurrencyAmount,
+  me: SettleActor,
+): SettleUpPrefill {
+  const amount = Math.abs(line.amount);
+  return line.amount > 0
+    ? {
+        fromUserId: member.id,
+        toUserId: me.id,
+        amount,
+        currency: line.currency,
+      }
+    : {
+        fromUserId: me.id,
+        toUserId: member.id,
+        amount,
+        currency: line.currency,
+      };
 }

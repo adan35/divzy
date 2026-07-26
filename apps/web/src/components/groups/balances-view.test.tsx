@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { GroupBalancesDto, GroupDto, UserDto } from '@divzy/shared';
 import { BalancesView } from './balances-view';
@@ -208,8 +208,9 @@ describe('BalancesView', () => {
       const user_ = userEvent.setup();
       await user_.click(screen.getByRole('button', { name: /exact debts as incurred/i }));
 
-      expect(screen.getByText('$40.00')).toBeInTheDocument();
-      expect(screen.getByText('£31.60')).toBeInTheDocument();
+      const exactDebts = screen.getByTestId('exact-debts');
+      expect(within(exactDebts).getByText('$40.00')).toBeInTheDocument();
+      expect(within(exactDebts).getByText('£31.60')).toBeInTheDocument();
     });
 
     it('falls back to the native amount only when a pairwise row has no convertedAmount', async () => {

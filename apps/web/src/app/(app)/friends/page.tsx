@@ -3,10 +3,12 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { ChevronRight, Minus, Plus, QrCode, RefreshCw, UserPlus } from 'lucide-react';
-import { matchesBalanceFilter, type BalanceFilter, type FriendDto } from '@divzy/shared';
+import { matchesBalanceFilter, type BalanceFilter, type FriendDto, type CurrencyAmount } from '@divzy/shared';
 import { useFriends, errorMessage } from '@/lib/hooks';
 import { collapsedBalanceEntries } from '@/lib/balance-display';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth-store';
+import { bucketSettleIntent } from '@/lib/settle-prefill';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -20,6 +22,7 @@ import { BalanceSentence } from '@/components/friends/balance-sentence';
 import { FriendBalanceBreakdown } from '@/components/friends/friend-balance-breakdown';
 import { FriendCodeDialog } from '@/components/friends/friend-code-dialog';
 import { FriendsBalanceSummary } from '@/components/friends/friends-balance-summary';
+import { SettleUpDialog } from '@/components/settle/settle-dialog';
 
 const FRIEND_FILTER_LABELS: Record<BalanceFilter, string> = {
   none: 'All friends',
@@ -38,7 +41,18 @@ function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] ?? name;
 }
 
-function FriendRow({ friend }: { friend: FriendDto }) {
+function FriendRow({
+  friend,
+  onSettleUp,
+}: {
+  friend: FriendDto;
+  onSettleUp?: (payload: {
+    friend: FriendDto;
+    bucket: FriendDto['balancesByGroup'][number];
+    line: CurrencyAmount;
+    groupId?: string;
+  }) => void;
+}) {
   // WI-049 defect fix: previously read only `friend.balances` (post-WI-001
   // this holds ONLY the unconvertible subset), so a fully-converted balance
   // wrongly rendered "Settled up". `collapsedBalanceEntries` folds the
@@ -125,16 +139,49 @@ function FriendRow({ friend }: { friend: FriendDto }) {
           <span aria-hidden="true" className="mx-2 h-4 w-4 shrink-0" />
         )}
       </div>
-      {canExpand && expanded && <FriendBalanceBreakdown friend={friend} />}
+      {canExpand && expanded && (
+        <FriendBalanceBreakdown
+          friend={friend}
+          onSettleUp={onSettleUp}
+          showDirectBucketLink={false}
+        />
+      )}
     </div>
   );
 }
 
 export default function FriendsPage() {
   const friends = useFriends();
+  const { user: me } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
   const [codeOpen, setCodeOpen] = useState(false);
   const [filter, setFilter] = useState<BalanceFilter>('none');
+  const [settleOpen, setSettleOpen] = useState(false);
+  const [settle, setSettle] = useState<
+    | {
+        friend: FriendDto;
+        bucket: FriendDto['balancesByGroup'][number];
+        line: CurrencyAmount;
+        groupId?: string;
+      }
+    | undefined
+  >();
+
+  const handleSettleUp = (
+    payload: {
+      friend: FriendDto;
+      bucket: FriendDto['balancesByGroup'][number];
+      line: CurrencyAmount;
+      groupId?: string;
+    },
+  ) => {
+    setSettle(payload);
+    setSettleOpen(true);
+  };
+
+  const settlePrefill =
+    settle && me ? bucketSettleIntent(settle.bucket, settle.line, settle.friend, me).prefill : undefined;
+  const settleGroupId = settle?.groupId;
 
   // WI-037: a pure derived view over the live useFriends() cache — re-runs on
   // every fresh fetch/invalidation, never a frozen snapshot. Evaluated over
@@ -213,7 +260,7 @@ export default function FriendsPage() {
           ) : (
             <Card className="divide-y divide-hairline p-0">
               {filtered.map((f) => (
-                <FriendRow key={f.user.id} friend={f} />
+                <FriendRow key={f.user.id} friend={f} onSettleUp={handleSettleUp} />
               ))}
             </Card>
           )}
@@ -222,6 +269,15 @@ export default function FriendsPage() {
 
       <AddFriendDialog open={addOpen} onOpenChange={setAddOpen} />
       <FriendCodeDialog open={codeOpen} onOpenChange={setCodeOpen} />
+      <SettleUpDialog
+        open={settleOpen}
+        onOpenChange={(open) => {
+          setSettleOpen(open);
+          if (!open) setSettle(undefined);
+        }}
+        groupId={settleGroupId}
+        prefill={settlePrefill}
+      />
     </>
   );
 }

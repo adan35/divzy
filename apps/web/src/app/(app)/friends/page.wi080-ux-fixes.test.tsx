@@ -19,6 +19,32 @@ vi.mock('@/lib/hooks', () => ({
   useFriendCode: vi.fn(),
   useRotateFriendCode: vi.fn(),
   errorMessage: () => 'error',
+  useGroup: vi.fn(() => ({ data: undefined, isLoading: false, isError: false, error: null })),
+  useGroupBalances: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+  useCreateSettlement: vi.fn(() => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+    isSuccess: false,
+    error: null,
+    reset: vi.fn(),
+  })),
+  useUploadReceipt: vi.fn(() => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+    isSuccess: false,
+    error: null,
+    reset: vi.fn(),
+  })),
 }));
 
 const mockedUseFriends = vi.mocked(useFriends);
@@ -86,7 +112,9 @@ function bucketLinkFor(label: string): HTMLElement {
 /** Decorative tree connector for a bucket label. */
 function connectorFor(label: string): HTMLElement {
   const link = bucketLinkFor(label);
-  const span = link.querySelector('[data-testid="tree-connector"]');
+  const container = link.parentElement?.parentElement;
+  if (!container) throw new Error(`could not find bucket container for "${label}"`);
+  const span = container.querySelector('[data-testid="tree-connector"]');
   if (!span) throw new Error(`could not find tree connector for "${label}"`);
   return span as HTMLElement;
 }
@@ -424,7 +452,11 @@ describe('FriendsPage — WI-080 per-group breakdown UX fixes', () => {
     await user.click(screen.getByRole('button', { name: SHOW_LABEL }));
 
     expect(bucketLinkFor('Trip to Rome')).toHaveAttribute('href', '/groups/group-trip');
-    expect(bucketLinkFor(DIRECT_LABEL)).toHaveAttribute('href', '/friends/friend-abc');
+    // WI-084: the Friends page suppresses the direct-bucket nav link because
+    // the row itself already navigates to the friend detail page.
+    expect(
+      screen.queryByRole('link', { name: new RegExp(escapeRegExp(DIRECT_LABEL), 'i') }),
+    ).not.toBeInTheDocument();
   });
 
   it('clicking a bucket line does not trigger row navigation or toggle expansion', async () => {

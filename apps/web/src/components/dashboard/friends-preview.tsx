@@ -2,11 +2,11 @@
 
 import { useState } from 'react';
 import { ChevronRight, Minus, Plus } from 'lucide-react';
-import type { FriendDto } from '@divzy/shared';
+import type { CurrencyAmount, FriendBalanceBucket, FriendDto } from '@divzy/shared';
 import { useFriends } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth-store';
 import { collapsedBalanceEntries } from '@/lib/balance-display';
-import { friendSettleIntent } from '@/lib/settle-prefill';
+import { friendSettleIntent, bucketSettleIntent } from '@/lib/settle-prefill';
 import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
@@ -31,7 +31,20 @@ function firstName(name: string): string {
  * as the one converted line, then any `balances` leftovers (currencies with
  * no resolvable rate) render as additional native lines, same as before.
  */
-export function FriendRow({ friend, onClick }: { friend: FriendDto; onClick?: () => void }) {
+export function FriendRow({
+  friend,
+  onClick,
+  onSettleUp,
+}: {
+  friend: FriendDto;
+  onClick?: () => void;
+  onSettleUp?: (payload: {
+    friend: FriendDto;
+    bucket: FriendBalanceBucket;
+    line: CurrencyAmount;
+    groupId?: string;
+  }) => void;
+}) {
   const entries = collapsedBalanceEntries(friend.balancesConverted, friend.balances).sort(
     (a, b) => Math.abs(b.amount) - Math.abs(a.amount),
   );
@@ -121,7 +134,9 @@ export function FriendRow({ friend, onClick }: { friend: FriendDto; onClick?: ()
           <span aria-hidden="true" className="mx-2 h-4 w-4 shrink-0" />
         )}
       </div>
-      {canExpand && expanded && <FriendBalanceBreakdown friend={friend} />}
+      {canExpand && expanded && (
+        <FriendBalanceBreakdown friend={friend} onSettleUp={onSettleUp} />
+      )}
     </div>
   );
 }
@@ -140,7 +155,17 @@ export function FriendsPreview() {
   const friends = useFriends();
   const { user: me } = useAuth();
   const [settleOpen, setSettleOpen] = useState(false);
-  const [selected, setSelected] = useState<FriendDto | null>(null);
+  const [target, setTarget] = useState<
+    | { kind: 'row'; friend: FriendDto }
+    | {
+        kind: 'bucket';
+        friend: FriendDto;
+        bucket: FriendBalanceBucket;
+        line: CurrencyAmount;
+        groupId?: string;
+      }
+    | null
+  >(null);
 
   const top = [...(friends.data ?? [])]
     .sort(
@@ -154,9 +179,27 @@ export function FriendsPreview() {
   function handleRowClick(friend: FriendDto) {
     const intent = friendSettleIntent(friend, me);
     if (intent.disabled) return;
-    setSelected(friend);
+    setTarget({ kind: 'row', friend });
     setSettleOpen(true);
   }
+
+  function handleBucketSettleUp(payload: {
+    friend: FriendDto;
+    bucket: FriendBalanceBucket;
+    line: CurrencyAmount;
+    groupId?: string;
+  }) {
+    setTarget({ kind: 'bucket', ...payload });
+    setSettleOpen(true);
+  }
+
+  const prefill =
+    target && me
+      ? target.kind === 'row'
+        ? friendSettleIntent(target.friend, me).prefill
+        : bucketSettleIntent(target.bucket, target.line, target.friend, me).prefill
+      : undefined;
+  const groupId = target?.kind === 'bucket' ? target.groupId : undefined;
 
   return (
     <section aria-label="Friends">
@@ -175,14 +218,23 @@ export function FriendsPreview() {
       ) : (
         <Card className="divide-y divide-hairline p-0">
           {top.map((f) => (
-            <FriendRow key={f.user.id} friend={f} onClick={() => handleRowClick(f)} />
+            <FriendRow
+              key={f.user.id}
+              friend={f}
+              onClick={() => handleRowClick(f)}
+              onSettleUp={handleBucketSettleUp}
+            />
           ))}
         </Card>
       )}
       <SettleUpDialog
         open={settleOpen}
-        onOpenChange={setSettleOpen}
-        prefill={selected ? friendSettleIntent(selected, me).prefill : undefined}
+        onOpenChange={(open) => {
+          setSettleOpen(open);
+          if (!open) setTarget(null);
+        }}
+        groupId={groupId}
+        prefill={prefill}
       />
     </section>
   );
