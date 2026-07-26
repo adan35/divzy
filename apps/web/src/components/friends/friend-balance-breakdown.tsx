@@ -151,7 +151,7 @@ function BucketLine({
       {visible.map((line, index) => {
         const isFirst = index === 0;
         return (
-          <div key={line.currency} className="flex items-stretch">
+          <div key={`${bucket.group?.id ?? 'direct'}-${line.currency}-${index}`} className="flex items-stretch">
             <button
               type="button"
               aria-label={settleAriaLabel(friend, bucket, line, directBucketLabel)}

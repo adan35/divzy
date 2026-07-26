@@ -3,6 +3,7 @@
 import {
   useInfiniteQuery,
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
   type QueryClient,
@@ -18,7 +19,9 @@ import type {
   CreateRecurringInput,
   CreateSettlementInput,
   ExpenseDto,
+  GroupBalancesDto,
   GroupDto,
+  GroupWhiteboardDto,
   ListExpensesQuery,
   ListSettlementsQuery,
   LoginInput,
@@ -29,6 +32,7 @@ import type {
   SettlementDto,
   UpdateExpenseInput,
   UpdateGroupInput,
+  UpdateGroupWhiteboardInput,
   UpdateMeInput,
   UpdateRecurringInput,
 } from '@divzy/shared';
@@ -74,6 +78,7 @@ export const queryKeys = {
   groups: ['groups'] as const,
   group: (groupId: string) => ['group', groupId] as const,
   groupBalances: (groupId: string) => ['group-balances', groupId] as const,
+  groupWhiteboard: (groupId: string) => ['group-whiteboard', groupId] as const,
   expenses: (filters: ExpenseFilters = {}) => ['expenses', clean(filters)] as const,
   expense: (expenseId: string) => ['expense', expenseId] as const,
   expenseHistory: (expenseId: string) => ['expense', expenseId, 'history'] as const,
@@ -294,6 +299,42 @@ export function useGroupBalances(groupId: string, enabled = true) {
     queryKey: queryKeys.groupBalances(groupId),
     queryFn: () => api.groups.balances(groupId),
     enabled: enabled && groupId.length > 0,
+  });
+}
+
+export function useGroupWhiteboard(groupId: string, enabled = true) {
+  return useQuery<GroupWhiteboardDto>({
+    queryKey: queryKeys.groupWhiteboard(groupId),
+    queryFn: () => api.groups.whiteboard(groupId),
+    enabled: enabled && groupId.length > 0,
+  });
+}
+
+export function useUpdateGroupWhiteboard() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ groupId, body }: { groupId: string; body: string }) =>
+      api.groups.updateWhiteboard(groupId, { body }),
+    onSuccess: (data, { groupId }) => {
+      queryClient.setQueryData(queryKeys.groupWhiteboard(groupId), data);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.groupWhiteboard(groupId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.group(groupId) });
+    },
+    onError: toastError,
+  });
+}
+
+/**
+ * WI-088: fetch balances for many groups in parallel. Pure composition of the
+ * existing `GET /groups/:groupId/balances` endpoint; no new backend surface.
+ */
+export function useGroupBalancesMany(groupIds: string[]) {
+  return useQueries({
+    queries: groupIds.map((groupId) => ({
+      queryKey: queryKeys.groupBalances(groupId),
+      queryFn: () => api.groups.balances(groupId),
+      enabled: groupId.length > 0,
+    })),
   });
 }
 
@@ -599,13 +640,17 @@ export function useAddComment() {
 // Settlements
 // ---------------------------------------------------------------------------
 
-export function useSettlementsInfinite(filters: SettlementFilters = {}) {
+export function useSettlementsInfinite(
+  filters: SettlementFilters = {},
+  options: { enabled?: boolean } = {},
+) {
   return useInfiniteQuery({
     queryKey: queryKeys.settlements(filters),
     queryFn: ({ pageParam }) =>
       api.settlements.list({ ...clean(filters), cursor: pageParam ?? undefined }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
+    enabled: options.enabled ?? true,
   });
 }
 

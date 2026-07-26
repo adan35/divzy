@@ -1,8 +1,10 @@
+// WI-086: the GroupMemberSettlements panel component was removed. This file
+// now guards the surviving `derivePositions` helper that BalancesView uses for
+// clickable member rows.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import type { GroupBalancesDto, UserDto } from '@divzy/shared';
-import { GroupMemberSettlements } from './group-member-settlements';
+import { derivePositions } from './group-member-settlements';
 
 function user(id: string, name: string): UserDto {
   return {
@@ -20,181 +22,121 @@ function user(id: string, name: string): UserDto {
 const me = user('u1', 'Me');
 const ana = user('u2', 'Ana');
 const bob = user('u3', 'Bob');
-const cara = user('u4', 'Cara');
 
 function fixtureData(overrides: Partial<GroupBalancesDto> = {}): GroupBalancesDto {
   return {
     groupId: 'g1',
     viewerCurrency: 'GBP',
     usedFallbackRates: false,
-    members: [me, ana, bob, cara].map((u) => ({ user: u, balances: [] })),
+    members: [me, ana, bob].map((u) => ({ user: u, balances: [] })),
     pairwise: [],
     suggestions: [],
     ...overrides,
   };
 }
 
-describe('GroupMemberSettlements — WI-084 caller-relative panel', () => {
+describe('derivePositions — WI-086 survivor from removed panel', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
   });
 
-  it('renders empty state when every other member is settled with the caller', () => {
-    const onSettleUp = vi.fn();
-    render(
-      <GroupMemberSettlements
-        groupId="g1"
-        data={fixtureData()}
-        meId={me.id}
-        onSettleUp={onSettleUp}
-      />,
-    );
-
-    expect(screen.getByText('All settled up in this group')).toBeInTheDocument();
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  it('returns an empty position for a member settled with the caller', () => {
+    const positions = derivePositions(fixtureData(), me.id);
+    const anaPos = positions.find((p) => p.user.id === ana.id);
+    expect(anaPos).toBeDefined();
+    expect(anaPos!.entries).toHaveLength(0);
   });
 
-  it('shows "owes you" when the member owes the caller', () => {
-    const onSettleUp = vi.fn();
-    render(
-      <GroupMemberSettlements
-        groupId="g1"
-        data={fixtureData({
-          pairwise: [
-            {
-              fromUserId: ana.id,
-              toUserId: me.id,
-              currency: 'PKR',
-              amount: 50000,
-              from: ana,
-              to: me,
-            },
-          ],
-        })}
-        meId={me.id}
-        onSettleUp={onSettleUp}
-      />,
+  it('positively signs amounts when the member owes the caller', () => {
+    const positions = derivePositions(
+      fixtureData({
+        pairwise: [
+          {
+            fromUserId: ana.id,
+            toUserId: me.id,
+            currency: 'PKR',
+            amount: 50000,
+            from: ana,
+            to: me,
+          },
+        ],
+      }),
+      me.id,
     );
-
-    expect(screen.getByText(/Ana owes you/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Ana owes you/i })).toBeInTheDocument();
+    expect(positions.find((p) => p.user.id === ana.id)?.entries).toEqual([
+      { currency: 'PKR', amount: 50000 },
+    ]);
   });
 
-  it('shows "you owe" when the caller owes the member', () => {
-    render(
-      <GroupMemberSettlements
-        groupId="g1"
-        data={fixtureData({
-          pairwise: [
-            {
-              fromUserId: me.id,
-              toUserId: bob.id,
-              currency: 'USD',
-              amount: 2000,
-              from: me,
-              to: bob,
-            },
-          ],
-        })}
-        meId={me.id}
-        onSettleUp={vi.fn()}
-      />,
+  it('negatively signs amounts when the caller owes the member', () => {
+    const positions = derivePositions(
+      fixtureData({
+        pairwise: [
+          {
+            fromUserId: me.id,
+            toUserId: bob.id,
+            currency: 'USD',
+            amount: 2000,
+            from: me,
+            to: bob,
+          },
+        ],
+      }),
+      me.id,
     );
-
-    expect(screen.getByText(/You owe Bob/i)).toBeInTheDocument();
+    expect(positions.find((p) => p.user.id === bob.id)?.entries).toEqual([
+      { currency: 'USD', amount: -2000 },
+    ]);
   });
 
-  it('shows settled members explicitly without a button', () => {
-    render(
-      <GroupMemberSettlements
-        groupId="g1"
-        data={fixtureData({
-          members: [me, ana, bob].map((u) => ({ user: u, balances: [] })),
-          pairwise: [
-            {
-              fromUserId: ana.id,
-              toUserId: me.id,
-              currency: 'PKR',
-              amount: 50000,
-              from: ana,
-              to: me,
-            },
-          ],
-        })}
-        meId={me.id}
-        onSettleUp={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByText('Settled up')).toBeInTheDocument();
-    expect(screen.getByText('Bob')).toBeInTheDocument();
-  });
-
-  it('clicking a line emits the correct group-scoped prefill', async () => {
-    const onSettleUp = vi.fn();
-    render(
-      <GroupMemberSettlements
-        groupId="g1"
-        data={fixtureData({
-          pairwise: [
-            {
-              fromUserId: ana.id,
-              toUserId: me.id,
-              currency: 'PKR',
-              amount: 50000,
-              from: ana,
-              to: me,
-            },
-          ],
-        })}
-        meId={me.id}
-        onSettleUp={onSettleUp}
-      />,
-    );
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /Ana owes you/i }));
-
-    expect(onSettleUp).toHaveBeenCalledWith({
-      fromUserId: ana.id,
-      toUserId: me.id,
-      amount: 50000,
-      currency: 'PKR',
+  it('renders without a React duplicate-key warning when a member has two same-currency lines', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Construct a tiny render that maps the derived entries the same way the
+    // old panel did, proving the returned key-safe structure still works.
+    const data = fixtureData({
+      pairwise: [
+        {
+          fromUserId: ana.id,
+          toUserId: me.id,
+          currency: 'PKR',
+          amount: 50000,
+          from: ana,
+          to: me,
+          convertedAmount: 250,
+        },
+        {
+          fromUserId: me.id,
+          toUserId: ana.id,
+          currency: 'PKR',
+          amount: 20000,
+          from: me,
+          to: ana,
+        },
+      ],
     });
-  });
+    const positions = derivePositions(data, me.id);
+    const anaPos = positions.find((p) => p.user.id === ana.id)!;
 
-  it('handles converted + leftover multi-currency lines', () => {
     render(
-      <GroupMemberSettlements
-        groupId="g1"
-        data={fixtureData({
-          pairwise: [
-            {
-              fromUserId: ana.id,
-              toUserId: me.id,
-              currency: 'USD',
-              amount: 1000,
-              from: ana,
-              to: me,
-              convertedAmount: 790,
-            },
-            {
-              fromUserId: ana.id,
-              toUserId: me.id,
-              currency: 'JPY',
-              amount: 5000,
-              from: ana,
-              to: me,
-            },
-          ],
-        })}
-        meId={me.id}
-        onSettleUp={vi.fn()}
-      />,
+      <div>
+        {anaPos.entries.slice(0, 2).map((line, index) => (
+          <button
+            key={`${ana.id}-${line.currency}-${index}`}
+            type="button"
+            data-testid={`line-${index}`}
+          >
+            {line.amount} {line.currency}
+          </button>
+        ))}
+      </div>,
     );
 
-    expect(screen.getAllByText(/Ana owes you/i)).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: /Ana owes you/i })).toHaveLength(2);
+    expect(screen.getAllByRole('button')).toHaveLength(2);
+    const keyWarning = errorSpy.mock.calls.some(
+      (call) => typeof call[0] === 'string' && call[0].includes('same key'),
+    );
+    expect(keyWarning).toBe(false);
+    errorSpy.mockRestore();
   });
 });

@@ -41,6 +41,15 @@ vi.mock('next/navigation', () => ({
 const useGroupsMock = vi.fn();
 vi.mock('@/lib/hooks', () => ({ useGroups: () => useGroupsMock() }));
 
+vi.mock('@/components/settle/settle-dialog', () => ({
+  SettleUpDialog: () => null,
+}));
+
+vi.mock('./unsettled-payments-dialog', () => ({
+  UnsettledPaymentsDialog: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="unsettled-dialog">Unsettled payments dialog</div> : null,
+}));
+
 import { GroupsPreview } from './groups-preview';
 
 function fixtureGroup(overrides: Partial<GroupSummaryDto> = {}): GroupSummaryDto {
@@ -246,5 +255,83 @@ describe('GroupsPreview (spec-WI-057)', () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('link', { name: /trip/i }));
+  });
+
+  describe('WI-088 — section header "+" dropdown', () => {
+    it('renders a "+" trigger with an accessible label', () => {
+      mockGroups([
+        fixtureGroup({
+          id: 'trip',
+          name: 'Trip',
+          yourBalances: [],
+          yourBalancesNative: [{ currency: 'USD', amount: -2000 }],
+          yourBalanceConverted: { currency: 'USD', amount: -2000 },
+        }),
+      ]);
+
+      render(<GroupsPreview />);
+
+      expect(screen.getByRole('button', { name: /group actions/i })).toBeInTheDocument();
+    });
+
+    it('opens a dropdown with "Create group" and "Unsettled payments"', async () => {
+      mockGroups([
+        fixtureGroup({
+          id: 'trip',
+          name: 'Trip',
+          yourBalances: [],
+          yourBalancesNative: [{ currency: 'USD', amount: -2000 }],
+          yourBalanceConverted: { currency: 'USD', amount: -2000 },
+        }),
+      ]);
+
+      render(<GroupsPreview />);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: /group actions/i }));
+
+      expect(screen.getByRole('menuitem', { name: /create group/i })).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: /unsettled payments/i })).toBeInTheDocument();
+    });
+
+    it('"Create group" routes to /groups?new=1', async () => {
+      mockGroups([
+        fixtureGroup({
+          id: 'trip',
+          name: 'Trip',
+          yourBalances: [],
+          yourBalancesNative: [{ currency: 'USD', amount: -2000 }],
+          yourBalanceConverted: { currency: 'USD', amount: -2000 },
+        }),
+      ]);
+
+      render(<GroupsPreview />);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: /group actions/i }));
+      await user.click(screen.getByRole('menuitem', { name: /create group/i }));
+
+      expect(pushMock).toHaveBeenCalledWith('/groups?new=1');
+    });
+
+    it('"Unsettled payments" opens the unsettled-payments dialog', async () => {
+      mockGroups([
+        fixtureGroup({
+          id: 'trip',
+          name: 'Trip',
+          yourBalances: [],
+          yourBalancesNative: [{ currency: 'USD', amount: -2000 }],
+          yourBalanceConverted: { currency: 'USD', amount: -2000 },
+        }),
+      ]);
+
+      render(<GroupsPreview />);
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: /group actions/i }));
+      await user.click(screen.getByRole('menuitem', { name: /unsettled payments/i }));
+
+      expect(screen.getByTestId('unsettled-dialog')).toBeInTheDocument();
+    });
   });
 });

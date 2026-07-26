@@ -8,6 +8,7 @@ import type {
   ExpenseRevisionDto,
   GroupDto,
   GroupMemberDto,
+  GroupWhiteboardDto,
   NotificationDto,
   NotificationType,
   PublicUserDto,
@@ -180,6 +181,17 @@ export function toGroupDto(group: GroupWithRelations): GroupDto {
     archivedAt: group.archivedAt ? group.archivedAt.toISOString() : null,
     createdAt: group.createdAt.toISOString(),
     updatedAt: group.updatedAt.toISOString(),
+  };
+}
+
+export function toGroupWhiteboardDto(
+  whiteboard: { body: string; updatedById: string | null; updatedAt: Date },
+  editor: PublicUserPayload | null,
+): GroupWhiteboardDto {
+  return {
+    body: whiteboard.body,
+    updatedBy: editor ? toPublicUser(editor) : null,
+    updatedAt: whiteboard.updatedAt.toISOString(),
   };
 }
 

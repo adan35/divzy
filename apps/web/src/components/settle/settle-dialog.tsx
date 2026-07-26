@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowLeftRight, Check, Copy, FileText, Paperclip, Share2, X } from 'lucide-react';
+import { ArrowLeftRight, Check, Copy, FileText, MoveRight, Paperclip, Share2, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { toast } from 'sonner';
 import {
@@ -27,7 +27,9 @@ import { apiUrl } from '@/lib/api';
 import { celebrate } from '@/lib/celebrate';
 import { copyToClipboard } from '@/lib/clipboard';
 import { AmountInput } from '@/components/ui/amount-input';
+import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { CurrencySelect } from '@/components/ui/currency-select';
 import { DateInput } from '@/components/ui/date-input';
 import {
@@ -39,6 +41,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Field, Input } from '@/components/ui/input';
+import { MoneyText } from '@/components/ui/money-text';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -56,6 +59,11 @@ export interface SettleUpDialogProps {
   groupId?: string;
   /** One-tap prefill from a settlement suggestion. */
   prefill?: SettleUpPrefill;
+  /**
+   * WI-086: open the group-scoped dialog in debt-list mode when there is no
+   * prefill. Default 'form' preserves every existing entry point.
+   */
+  initialView?: 'list' | 'form';
 }
 
 /**
@@ -169,7 +177,13 @@ function buildSettleLink(
  * scratch. Parties come from the group's members, or from your friends list
  * for non-group payments. Validates: parties differ, you are involved, amount > 0.
  */
-export function SettleUpDialog({ open, onOpenChange, groupId, prefill }: SettleUpDialogProps) {
+export function SettleUpDialog({
+  open,
+  onOpenChange,
+  groupId,
+  prefill,
+  initialView = 'form',
+}: SettleUpDialogProps) {
   const { user: me } = useAuth();
   const groupQuery = useGroup(groupId ?? '', open && Boolean(groupId));
   const friendsQuery = useFriends();
@@ -196,6 +210,14 @@ export function SettleUpDialog({ open, onOpenChange, groupId, prefill }: SettleU
   const [proofUrl, setProofUrl] = useState<string | null>(null);
   const [amountTouched, setAmountTouched] = useState(false);
   const currencyTouched = useRef(false);
+
+  // WI-086: list mode lets the caller pick a debt from the group ledger before
+  // switching to the Record-payment form. `activePrefill` merges the prop
+  // prefill with a user-selected list row.
+  const [mode, setMode] = useState<'list' | 'form'>(
+    initialView === 'list' && groupId ? 'list' : 'form',
+  );
+  const [activePrefill, setActivePrefill] = useState<SettleUpPrefill | undefined>(prefill);
 
   // WI-016 Part B — shareable settle-up link/QR state.
   const [origin, setOrigin] = useState('');
@@ -230,6 +252,8 @@ export function SettleUpDialog({ open, onOpenChange, groupId, prefill }: SettleU
   // overwrite a user's in-progress pick (WI-021).
   useEffect(() => {
     if (!open) return;
+    setMode(initialView === 'list' && groupId ? 'list' : 'form');
+    setActivePrefill(prefill);
     setFromUserId('');
     setToUserId('');
     setAmount(prefill?.amount ?? null);
@@ -246,15 +270,27 @@ export function SettleUpDialog({ open, onOpenChange, groupId, prefill }: SettleU
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only on open
   }, [open]);
 
+  // When an external prefill arrives while the dialog is already open, adopt
+  // it and switch to form mode. (List-row selections update activePrefill
+  // directly in the click handler, so they do not need this effect.)
+  useEffect(() => {
+    if (!open) return;
+    setActivePrefill(prefill);
+    if (prefill) setMode('form');
+  }, [prefill, open]);
+
   // WI-024/ADR-021: derived party resolution. `fromUserId`/`toUserId` state
   // holds the user's explicit override (or '' meaning "no override yet");
   // the resolved values recompute every render from current props/query
   // data, so they are never stale on re-open and never overwrite an
   // in-progress user choice (WI-021).
-  const defaultFrom = prefill?.fromUserId ?? me?.id ?? '';
+  // WI-086: `activePrefill` captures a list-row selection; it wins over the
+  // prop prefill so the form reflects the latest user pick.
+  const effectivePrefill = activePrefill ?? prefill;
+  const defaultFrom = effectivePrefill?.fromUserId ?? me?.id ?? '';
   const resolvedFrom = fromUserId || defaultFrom;
   const defaultTo =
-    prefill?.toUserId ?? candidates.find((c) => c.id !== (resolvedFrom || me?.id))?.id ?? '';
+    effectivePrefill?.toUserId ?? candidates.find((c) => c.id !== (resolvedFrom || me?.id))?.id ?? '';
   const resolvedTo = toUserId || defaultTo;
 
   // Adopt the group currency when the group loads late (unless already chosen).
@@ -424,15 +460,117 @@ export function SettleUpDialog({ open, onOpenChange, groupId, prefill }: SettleU
     );
   };
 
+  // WI-086: group-scoped debt list rendered before the Record-payment form.
+  // It mirrors the Balances tab's actionable section: suggestions when
+  // simplifyDebts is ON, pairwise exact debts when OFF.
+  const listContent = (() => {
+    if (mode !== 'list' || !groupId) return null;
+    const groupData = groupQuery.data;
+    const balancesData = groupBalancesQuery.data;
+
+    if (!groupData || !balancesData) {
+      return (
+        <div className="space-y-3 py-2">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-2/3" />
+        </div>
+      );
+    }
+
+    const simplifyDebts = groupData.simplifyDebts ?? true;
+    const actionable = simplifyDebts ? balancesData.suggestions : balancesData.pairwise;
+
+    if (actionable.length === 0) {
+      return (
+        <Card className="p-6 text-center">
+          <div className="text-2xl" aria-hidden="true">
+            ✅
+          </div>
+          <p className="mt-1.5 text-sm font-medium text-ink">All settled up</p>
+          <p className="text-[13px] text-ink-3">No one needs to pay anyone in this group.</p>
+        </Card>
+      );
+    }
+
+    return (
+      <div className="space-y-2">
+        {actionable.map((row) => {
+          const canRecord = me?.id === row.fromUserId || me?.id === row.toUserId;
+          return (
+            <Card
+              key={`${row.currency}-${row.fromUserId}-${row.toUserId}`}
+              className="flex flex-wrap items-center gap-x-3 gap-y-2 p-4"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <Avatar user={row.from} size="sm" />
+                <span className="truncate text-sm font-medium text-ink">{nameOf(row.fromUserId)}</span>
+              </span>
+              <MoveRight className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+              <span className="flex min-w-0 items-center gap-2">
+                <Avatar user={row.to} size="sm" />
+                <span className="truncate text-sm font-medium text-ink">{nameOf(row.toUserId)}</span>
+              </span>
+              <span className="ml-auto flex items-center gap-3">
+                <MoneyText
+                  amount={row.amount}
+                  currency={row.currency}
+                  className="text-sm font-semibold"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!canRecord}
+                  onClick={() => {
+                    const next: SettleUpPrefill = {
+                      fromUserId: row.fromUserId,
+                      toUserId: row.toUserId,
+                      amount: row.amount,
+                      currency: row.currency,
+                    };
+                    setActivePrefill(next);
+                    setMode('form');
+                    setAmount(next.amount);
+                    setCurrency(next.currency);
+                    setAmountTouched(false);
+                    currencyTouched.current = true;
+                  }}
+                >
+                  Settle
+                </Button>
+              </span>
+            </Card>
+          );
+        })}
+      </div>
+    );
+  })();
+
   return (
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
       size="md"
-      ariaLabel="Record a payment"
+      ariaLabel={mode === 'list' ? 'Settle Up' : 'Record a payment'}
       dismissible={!createSettlement.isPending}
     >
-      <form onSubmit={handleSubmit} noValidate>
+      {mode === 'list' ? (
+        <>
+          <DialogHeader>
+            <DialogTitle>Settle Up</DialogTitle>
+            <DialogDescription>Choose a debt to settle in this group.</DialogDescription>
+          </DialogHeader>
+
+          <DialogBody className="space-y-4 pb-4">{listContent}</DialogBody>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </>
+      ) : (
+        <form onSubmit={handleSubmit} noValidate>
         <DialogHeader>
           <DialogTitle>Record a payment</DialogTitle>
           <DialogDescription>
@@ -735,6 +873,7 @@ export function SettleUpDialog({ open, onOpenChange, groupId, prefill }: SettleU
           </Button>
         </DialogFooter>
       </form>
+      )}
     </Dialog>
   );
 }

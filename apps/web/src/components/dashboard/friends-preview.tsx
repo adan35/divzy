@@ -78,9 +78,9 @@ export function FriendRow({
               <span className="block text-[13px] text-ink-3">Settled up</span>
             ) : (
               <>
-                {visible.map((b) => (
+                {visible.map((b, i) => (
                   <span
-                    key={b.currency}
+                    key={`${b.currency}-${i}`}
                     className={cn(
                       'block truncate text-[13px]',
                       b.amount > 0 ? 'text-pos' : b.amount < 0 ? 'text-neg' : 'text-ink-3',

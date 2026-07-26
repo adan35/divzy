@@ -15,10 +15,12 @@ import {
   zJoinGroupInput,
   zUpdateGroupInput,
   zUpdateMemberInput,
+  zUpdateGroupWhiteboardInput,
   type CreateGroupInput,
   type CurrencyAmount,
   type GroupDto,
   type GroupSummaryDto,
+  type GroupWhiteboardDto,
   type LedgerExpense,
   type LedgerSettlement,
   type NetsByCurrency,
@@ -26,7 +28,7 @@ import {
 } from '@divzy/shared';
 import { recordActivity } from '../lib/activity';
 import { convertBalanceForViewer } from '../lib/balance-conversion';
-import { bumpUsers, cached, cacheKey } from '../lib/cache';
+import { bumpGroupGeneration, bumpUsers, cached, cacheKey } from '../lib/cache';
 import { AppError } from '../lib/errors';
 import { prisma } from '../lib/prisma';
 import { resolveConversionRates } from '../lib/rates';
@@ -35,6 +37,7 @@ import {
   groupInclude,
   publicUserSelect,
   toGroupDto,
+  toGroupWhiteboardDto,
   type GroupWithRelations,
 } from '../lib/serializers';
 import { ensureFriendshipsAmong } from '../lib/social';
@@ -105,6 +108,17 @@ async function loadGroupDto(groupId: string): Promise<GroupDto> {
   const group = await prisma.group.findUnique({ where: { id: groupId }, include: groupInclude });
   if (!group) throw new AppError(404, 'NOT_FOUND', 'Group not found');
   return toGroupDto(group);
+}
+
+async function loadGroupWhiteboardDto(groupId: string): Promise<GroupWhiteboardDto> {
+  const whiteboard = await prisma.groupWhiteboard.findUnique({ where: { groupId } });
+  if (!whiteboard) {
+    return { body: '', updatedBy: null, updatedAt: null };
+  }
+  const editor = whiteboard.updatedById
+    ? await prisma.user.findUnique({ where: { id: whiteboard.updatedById }, select: publicUserSelect })
+    : null;
+  return toGroupWhiteboardDto(whiteboard, editor);
 }
 
 /** Non-deleted expenses (payers+splits) and settlements of one group, for the balance engine. */
@@ -942,6 +956,34 @@ const routes: FastifyPluginAsync = async (app) => {
     const { groupId } = zGroupParams.parse(request.params);
     await removeMemberFlow(groupId, request.userId, request.userId);
     return reply.code(204).send();
+  });
+
+  // -- GET /groups/:groupId/whiteboard — any active member ---------------------------
+  app.get('/groups/:groupId/whiteboard', { preHandler: [app.authenticate] }, async (request) => {
+    const { groupId } = zGroupParams.parse(request.params);
+    await assertActiveMember(groupId, request.userId);
+    return loadGroupWhiteboardDto(groupId);
+  });
+
+  // -- PUT /groups/:groupId/whiteboard — any active member, full replacement ---------
+  app.put('/groups/:groupId/whiteboard', { preHandler: [app.authenticate] }, async (request) => {
+    const { groupId } = zGroupParams.parse(request.params);
+    const input = zUpdateGroupWhiteboardInput.parse(request.body);
+    await assertActiveMember(groupId, request.userId);
+
+    await prisma.groupWhiteboard.upsert({
+      where: { groupId },
+      update: { body: input.body, updatedById: request.userId },
+      create: { groupId, body: input.body, updatedById: request.userId },
+    });
+
+    // Defensive invalidation per ADR-031; today only group-balances keys on this,
+    // but any future group-scoped cache inherits correct invalidation.
+    bumpGroupGeneration(groupId);
+
+    // Deliberately silent: no recordActivity call, no notification, no socket event.
+    // This is the charter-carved exception for whiteboard edits (WI-087).
+    return loadGroupWhiteboardDto(groupId);
   });
 };
 

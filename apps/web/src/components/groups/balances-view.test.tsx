@@ -330,4 +330,76 @@ describe('BalancesView', () => {
       });
     });
   });
+
+  describe('WI-085 — Balances tab member rows are clickable settle-up triggers', () => {
+    function withMemberRows() {
+      mockedUseGroupBalances.mockReturnValue(
+        balancesQuery({
+          groupId: 'g1',
+          viewerCurrency: 'GBP',
+          usedFallbackRates: false,
+          members: [
+            { user: me, balances: [] },
+            { user: bob, balances: [{ currency: 'USD', amount: 2000 }] },
+            { user: cara, balances: [] },
+          ],
+          pairwise: [
+            {
+              fromUserId: bob.id,
+              toUserId: me.id,
+              currency: 'USD',
+              amount: 2000,
+              from: bob,
+              to: me,
+            },
+          ],
+          suggestions: [],
+        }),
+      );
+    }
+
+    it('clicking another member opens the dialog with the caller↔member pairwise prefill', async () => {
+      const user_ = userEvent.setup();
+      withMemberRows();
+      render(<BalancesView groupId="g1" />);
+
+      // Bob's net-phrase sub-line is one contiguous element; walk up to the row.
+      // A clickable member row IS a <button>, so closest('button') both finds it
+      // and proves clickability (it is null for non-clickable rows). Accessible-
+      // name regexes are brittle here: the Avatar initial prefixes the name.
+      const bobButton = screen.getByText('gets back $20.00').closest('button');
+      expect(bobButton).not.toBeNull();
+      await user_.click(bobButton!);
+
+      const dialog = screen.getByTestId('settle-dialog');
+      expect(JSON.parse(dialog.getAttribute('data-prefill')!)).toEqual({
+        fromUserId: bob.id,
+        toUserId: me.id,
+        amount: 2000,
+        currency: 'USD',
+      });
+    });
+
+    it('the caller\'s own row is not clickable', () => {
+      withMemberRows();
+      render(<BalancesView groupId="g1" />);
+
+      // '(you)' renders only inside the caller's own row name. closest('button')
+      // must be null — if the !isMe guard ever breaks, the own row becomes a
+      // button and this assertion fails (a located, non-vacuous negative).
+      expect(screen.getByText('(you)').closest('button')).toBeNull();
+    });
+
+    it('a member with zero caller↔member pairwise position has no settle affordance', () => {
+      withMemberRows();
+      render(<BalancesView groupId="g1" />);
+
+      // Same located-negative pattern: Cara's name is unique in this fixture;
+      // her row must not be a button while her pairwise position is zero.
+      const caraName = screen.getByText('Cara');
+      expect(caraName.closest('button')).toBeNull();
+      const caraRow = caraName.parentElement!.parentElement as HTMLElement;
+      expect(within(caraRow).getByText('settled up')).toBeInTheDocument();
+    });
+  });
 });

@@ -85,13 +85,19 @@ export interface TabsContentProps {
   value: string;
   children: ReactNode;
   className?: string;
+  /** WI-087: keep the panel mounted while hidden so a child query can stay disabled until active. */
+  forceMount?: boolean;
 }
 
-export function TabsContent({ value, children, className }: TabsContentProps) {
+export function TabsContent({ value, children, className, forceMount }: TabsContentProps) {
   const ctx = useTabsContext('TabsContent');
-  if (ctx.value !== value) return null;
+  const active = ctx.value === value;
+  if (!active && !forceMount) return null;
   return (
-    <div role="tabpanel" className={cn('pt-4 focus:outline-none', className)}>
+    <div
+      role="tabpanel"
+      className={cn('pt-4 focus:outline-none', !active && 'hidden', className)}
+    >
       {children}
     </div>
   );

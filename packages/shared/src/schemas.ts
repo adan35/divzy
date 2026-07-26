@@ -189,6 +189,12 @@ export const zAddMemberByFriendInput = z.object({
 });
 export type AddMemberByFriendInput = z.infer<typeof zAddMemberByFriendInput>;
 
+/** PUT /groups/:groupId/whiteboard (WI-087) — full replacement of the shared note. */
+export const zUpdateGroupWhiteboardInput = z.object({
+  body: z.string().max(LIMITS.GROUP_WHITEBOARD_BODY_MAX),
+});
+export type UpdateGroupWhiteboardInput = z.infer<typeof zUpdateGroupWhiteboardInput>;
+
 // ---------------------------------------------------------------------------
 // Expenses
 // ---------------------------------------------------------------------------

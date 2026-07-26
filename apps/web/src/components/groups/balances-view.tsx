@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ChevronRight, HandCoins, MoveRight, RefreshCw } from 'lucide-react';
 import { formatMoney, type CurrencyAmount, type PublicUserDto } from '@divzy/shared';
 import { errorMessage, useGroup, useGroupBalances, useUpdateGroup } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth-store';
+import { groupMemberSettleIntent } from '@/lib/settle-prefill';
 import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -14,7 +15,7 @@ import { MoneyText } from '@/components/ui/money-text';
 import { SkeletonList } from '@/components/ui/skeleton';
 import { ManualRatePrompts } from '@/components/settle/manual-rate-prompt';
 import { SettleUpDialog, type SettleUpPrefill } from '@/components/settle/settle-dialog';
-import { GroupMemberSettlements } from './group-member-settlements';
+import { derivePositions } from './group-member-settlements';
 
 export interface BalancesViewProps {
   groupId: string;
@@ -157,6 +158,18 @@ export function BalancesView({ groupId }: BalancesViewProps) {
   const displayName = (user: PublicUserDto): string =>
     me && user.id === me.id ? 'You' : user.name;
 
+  // WI-085: caller-relative pairwise position per non-me member, derived from
+  // the same pairwise exact-debts array that feeds the "Who owes whom" panel.
+  // The row's *displayed* figure remains the member's group net; the dialog
+  // prefill uses the authoritative caller↔member pairwise amount.
+  const memberPositions = useMemo(() => {
+    if (!me) return new Map<string, CurrencyAmount[]>();
+    return derivePositions(data, me.id).reduce((map, pos) => {
+      map.set(pos.user.id, pos.entries);
+      return map;
+    }, new Map<string, CurrencyAmount[]>());
+  }, [data, me]);
+
   // WI-002: every member's unresolved native currency, deduped, feeds one
   // shared manual-rate prompt for this whole balances view.
   const unresolved = dedupeByCurrency(
@@ -167,22 +180,17 @@ export function BalancesView({ groupId }: BalancesViewProps) {
     <div className="space-y-6">
       {data.usedFallbackRates && <FallbackRatesNotice />}
 
-      {me && (
-        <GroupMemberSettlements
-          groupId={groupId}
-          data={data}
-          meId={me.id}
-          onSettleUp={(prefill) => setSettle({ prefill })}
-        />
-      )}
-
-      {/* Per-member nets — collapsed to one converted figure (WI-001) */}
+      {/* Per-member nets — collapsed to one converted figure (WI-001). WI-085:
+          each non-me row with a nonzero caller↔member pairwise position is now
+          a settle-up trigger; the displayed net stays unchanged. */}
       <Card className="divide-y divide-hairline">
         {members.map(({ user, balances: nets, convertedNet }) => {
           const isMe = me?.id === user.id;
           const settled = nets.length === 0;
-          return (
-            <div key={user.id} className="flex items-center gap-3 px-4 py-3.5">
+          const pairwise = memberPositions.get(user.id);
+          const clickable = !isMe && !!pairwise && pairwise.length > 0;
+          const rowContent = (
+            <>
               <Avatar user={user} size="md" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-ink">
@@ -215,9 +223,9 @@ export function BalancesView({ groupId }: BalancesViewProps) {
                     className="text-sm"
                   />
                 ) : (
-                  nets.map((n) => (
+                  nets.map((n, i) => (
                     <MoneyText
-                      key={n.currency}
+                      key={`${n.currency}-${i}`}
                       amount={n.amount}
                       currency={n.currency}
                       mode="signed-color"
@@ -226,6 +234,33 @@ export function BalancesView({ groupId }: BalancesViewProps) {
                   ))
                 )}
               </div>
+            </>
+          );
+
+          return clickable ? (
+            <button
+              key={user.id}
+              type="button"
+              onClick={() =>
+                me &&
+                pairwise &&
+                setSettle({
+                  prefill: groupMemberSettleIntent(user, pairwise[0], {
+                    id: me.id,
+                    defaultCurrency: data.viewerCurrency,
+                  }),
+                })
+              }
+              className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-surface-2 active:scale-[0.995]"
+            >
+              {rowContent}
+            </button>
+          ) : (
+            <div
+              key={user.id}
+              className="flex cursor-default items-center gap-3 px-4 py-3.5"
+            >
+              {rowContent}
             </div>
           );
         })}

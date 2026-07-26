@@ -4,10 +4,11 @@ import {
   formatMoney,
   type ExpenseDto,
   type PublicUserDto,
+  type SettlementDto,
   type UserDto,
 } from '@divzy/shared';
 import { useAuth } from '@/lib/auth-store';
-import { useExpensesInfinite, useUsedCategories } from '@/lib/hooks';
+import { useExpensesInfinite, useSettlementsInfinite, useUsedCategories } from '@/lib/hooks';
 import { ExpenseList } from './expense-list';
 
 // Isolate ExpenseList's own row-rendering logic: the detail dialog and editor
@@ -27,6 +28,7 @@ vi.mock('@/lib/auth-store', () => ({
 vi.mock('@/lib/hooks', () => ({
   errorMessage: (error: unknown) => String(error),
   useExpensesInfinite: vi.fn(),
+  useSettlementsInfinite: vi.fn(),
   useUsedCategories: vi.fn(),
 }));
 
@@ -49,6 +51,21 @@ const ben: PublicUserDto = { id: 'ben', name: 'Ben', avatarColor: '#333333' };
 function money(minor: number, currency: string): string {
   return formatMoney(minor, currency).replace(/\s+/g, ' ');
 }
+
+beforeEach(() => {
+  // WI-089: provide a safe default so existing tests that don't touch
+  // settlements don't dereference undefined. Tests that care override this.
+  (useSettlementsInfinite as unknown as Mock).mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    fetchNextPage: vi.fn(),
+    refetch: vi.fn(),
+  });
+});
 
 function makeExpense(
   payers: ExpenseDto['payers'],
@@ -78,6 +95,39 @@ function makeExpense(
   };
 }
 
+function makeSettlement(overrides: Partial<SettlementDto> = {}): SettlementDto {
+  return {
+    id: 'settle-1',
+    groupId: 'group-1',
+    group: { id: 'group-1', name: 'Trip', emoji: '✈️' },
+    from: ana,
+    to: mePublic,
+    amount: 1000,
+    currency: 'PKR',
+    method: 'CASH',
+    note: null,
+    proofUrl: null,
+    date: '2026-07-10T00:00:00.000Z',
+    createdBy: ana,
+    deletedAt: null,
+    createdAt: '2026-07-10T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function settlementQuery(settlements: SettlementDto[] = []) {
+  return {
+    data: { pages: [{ items: settlements, nextCursor: null }] },
+    isLoading: false,
+    isError: false,
+    error: null,
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    fetchNextPage: vi.fn(),
+    refetch: vi.fn(),
+  };
+}
+
 function renderRow(expense: ExpenseDto) {
   (useAuth as unknown as Mock).mockReturnValue({ user: meUser, status: 'authed' });
   (useExpensesInfinite as unknown as Mock).mockReturnValue({
@@ -87,6 +137,18 @@ function renderRow(expense: ExpenseDto) {
     error: null,
     isFetchingNextPage: false,
     hasNextPage: false,
+    fetchNextPage: vi.fn(),
+    refetch: vi.fn(),
+  });
+  // WI-089: the hook is disabled without a groupId, but it is still called
+  // and its return value must be safe to read.
+  (useSettlementsInfinite as unknown as Mock).mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    hasNextPage: false,
+    isFetchingNextPage: false,
     fetchNextPage: vi.fn(),
     refetch: vi.fn(),
   });
@@ -410,5 +472,282 @@ describe('ExpenseList — category pills narrow to used categories when scoped (
       'true',
     );
     expect(within(pillGroup()).queryByRole('button', { name: /Groceries/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('ExpenseList — settled expense reveal (WI-089)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (useAuth as unknown as Mock).mockReturnValue({ user: meUser, status: 'authed' });
+    (useUsedCategories as unknown as Mock).mockReturnValue({ data: { categories: [] } });
+  });
+
+  function renderGroupList(
+    expenses: ExpenseDto[],
+    settlements: SettlementDto[] = [],
+  ) {
+    (useExpensesInfinite as unknown as Mock).mockReturnValue({
+      data: { pages: [{ items: expenses, nextCursor: null }] },
+      isLoading: false,
+      isError: false,
+      error: null,
+      isFetchingNextPage: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      refetch: vi.fn(),
+    });
+    (useSettlementsInfinite as unknown as Mock).mockReturnValue(settlementQuery(settlements));
+    return render(<ExpenseList groupId="group-1" />);
+  }
+
+  it('scenario: no settlement in the expense currency leaves the expense unsettled and visible', () => {
+    const expense = makeExpense(
+      [{ user: ana, amount: 1600 }],
+      [{ user: ana, amount: 1600, shares: null, percentBps: null, adjustment: null }],
+    );
+    renderGroupList([expense]);
+
+    expect(screen.getByText('Dinner')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Everything below is covered by recorded payments.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('scenario: partial settlement classifies older expenses as settled (documented approximation)', () => {
+    const older: ExpenseDto = {
+      ...makeExpense(
+        [{ user: ana, amount: 1600 }],
+        [{ user: ana, amount: 1600, shares: null, percentBps: null, adjustment: null }],
+      ),
+      id: 'older',
+      description: 'Older dinner',
+      createdAt: '2026-07-05T00:00:00.000Z',
+    };
+    const newer: ExpenseDto = {
+      ...makeExpense(
+        [{ user: ana, amount: 1600 }],
+        [{ user: ana, amount: 1600, shares: null, percentBps: null, adjustment: null }],
+      ),
+      id: 'newer',
+      description: 'Newer dinner',
+      createdAt: '2026-07-15T00:00:00.000Z',
+    };
+    renderGroupList([older, newer], [makeSettlement({ createdAt: '2026-07-10T00:00:00.000Z' })]);
+
+    // Default collapsed: only the newer (unsettled) expense is visible.
+    expect(screen.getByText('Newer dinner')).toBeInTheDocument();
+    expect(screen.queryByText('Older dinner')).not.toBeInTheDocument();
+
+    // Reveal affordance copy is present and toggles visibility.
+    fireEvent.click(screen.getByRole('button', { name: /Show settled expenses/i }));
+    expect(screen.getByText('Older dinner')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Hide settled expenses/i }));
+    expect(screen.queryByText('Older dinner')).not.toBeInTheDocument();
+  });
+
+  it('scenario: multi-currency independence — settlement only affects its own currency', () => {
+    const pkr: ExpenseDto = {
+      ...makeExpense(
+        [{ user: ana, amount: 1600 }],
+        [{ user: ana, amount: 1600, shares: null, percentBps: null, adjustment: null }],
+      ),
+      id: 'pkr',
+      description: 'PKR expense',
+      currency: 'PKR',
+      createdAt: '2026-07-05T00:00:00.000Z',
+    };
+    const usd: ExpenseDto = {
+      ...makeExpense(
+        [{ user: ana, amount: 1600 }],
+        [{ user: ana, amount: 1600, shares: null, percentBps: null, adjustment: null }],
+      ),
+      id: 'usd',
+      description: 'USD expense',
+      currency: 'USD',
+      createdAt: '2026-07-05T00:00:00.000Z',
+    };
+    renderGroupList([pkr, usd], [makeSettlement({ currency: 'USD', createdAt: '2026-07-10T00:00:00.000Z' })]);
+
+    // PKR has no settlement → visible. USD is settled → hidden by default.
+    expect(screen.getByText('PKR expense')).toBeInTheDocument();
+    expect(screen.queryByText('USD expense')).not.toBeInTheDocument();
+  });
+
+  it('scenario: restored expenses are included and classified by the same cutoff rule', () => {
+    const restored: ExpenseDto = {
+      ...makeExpense(
+        [{ user: ana, amount: 1600 }],
+        [{ user: ana, amount: 1600, shares: null, percentBps: null, adjustment: null }],
+      ),
+      id: 'restored',
+      description: 'Restored expense',
+      createdAt: '2026-07-05T00:00:00.000Z',
+      deletedAt: null,
+    };
+    renderGroupList([restored], [makeSettlement({ createdAt: '2026-07-10T00:00:00.000Z' })]);
+
+    // Restored expense predates the settlement → classified settled and hidden by default.
+    expect(screen.queryByText('Restored expense')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Show settled expenses/i }));
+    expect(screen.getByText('Restored expense')).toBeInTheDocument();
+  });
+
+  it('scenario: soft-deleted expenses remain excluded from the list', () => {
+    const deleted: ExpenseDto = {
+      ...makeExpense(
+        [{ user: ana, amount: 1600 }],
+        [{ user: ana, amount: 1600, shares: null, percentBps: null, adjustment: null }],
+      ),
+      id: 'deleted',
+      description: 'Deleted expense',
+      createdAt: '2026-07-05T00:00:00.000Z',
+      deletedAt: '2026-07-20T00:00:00.000Z',
+    };
+    renderGroupList([deleted], [makeSettlement({ createdAt: '2026-07-10T00:00:00.000Z' })]);
+
+    expect(screen.queryByText('Deleted expense')).not.toBeInTheDocument();
+    expect(screen.queryByText('Show settled expenses')).not.toBeInTheDocument();
+  });
+
+  it('scenario: all expenses settled shows the empty-state action "Show settled expenses"', () => {
+    const settled: ExpenseDto = {
+      ...makeExpense(
+        [{ user: ana, amount: 1600 }],
+        [{ user: ana, amount: 1600, shares: null, percentBps: null, adjustment: null }],
+      ),
+      id: 'settled',
+      description: 'Settled expense',
+      createdAt: '2026-07-05T00:00:00.000Z',
+    };
+    renderGroupList([settled], [makeSettlement({ createdAt: '2026-07-10T00:00:00.000Z' })]);
+
+    expect(screen.getByText('All caught up')).toBeInTheDocument();
+    expect(
+      screen.getByText('Every expense in this group has been covered by recorded payments.'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Show settled expenses/i }));
+    expect(screen.getByText('Settled expense')).toBeInTheDocument();
+  });
+
+  it('interaction with category filters: a filtered view still hides settled expenses by default', () => {
+    const settledFood: ExpenseDto = {
+      ...makeExpense(
+        [{ user: ana, amount: 1600 }],
+        [{ user: ana, amount: 1600, shares: null, percentBps: null, adjustment: null }],
+      ),
+      id: 'settled-food',
+      description: 'Settled food',
+      category: 'FOOD_DRINK',
+      createdAt: '2026-07-05T00:00:00.000Z',
+    };
+    (useUsedCategories as unknown as Mock).mockReturnValue({
+      data: { categories: ['FOOD_DRINK'] },
+    });
+    (useExpensesInfinite as unknown as Mock).mockReturnValue({
+      data: { pages: [{ items: [], nextCursor: null }] },
+      isLoading: false,
+      isError: false,
+      error: null,
+      isFetchingNextPage: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      refetch: vi.fn(),
+    });
+    (useSettlementsInfinite as unknown as Mock).mockReturnValue(
+      settlementQuery([makeSettlement({ createdAt: '2026-07-10T00:00:00.000Z' })]),
+    );
+    render(<ExpenseList groupId="group-1" />);
+
+    // Initially no expenses at all with no filter selected — the existing
+    // zero-expenses empty state renders.
+    expect(screen.getByText('No expenses yet')).toBeInTheDocument();
+
+    // Selecting the FOOD_DRINK pill returns only a settled expense → empty-state reveal.
+    (useExpensesInfinite as unknown as Mock).mockReturnValue({
+      data: { pages: [{ items: [settledFood], nextCursor: null }] },
+      isLoading: false,
+      isError: false,
+      error: null,
+      isFetchingNextPage: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      refetch: vi.fn(),
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Food \& drink/i }));
+
+    expect(screen.getByText('All caught up')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Show settled expenses/i }));
+    expect(screen.getByText('Settled food')).toBeInTheDocument();
+  });
+
+  it('non-group scopes do not classify expenses as settled', () => {
+    const expense: ExpenseDto = {
+      ...makeExpense(
+        [{ user: ana, amount: 1600 }],
+        [{ user: ana, amount: 1600, shares: null, percentBps: null, adjustment: null }],
+      ),
+      id: 'friend-expense',
+      description: 'Friend expense',
+      createdAt: '2026-07-05T00:00:00.000Z',
+    };
+    (useExpensesInfinite as unknown as Mock).mockReturnValue({
+      data: { pages: [{ items: [expense], nextCursor: null }] },
+      isLoading: false,
+      isError: false,
+      error: null,
+      isFetchingNextPage: false,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      refetch: vi.fn(),
+    });
+    (useSettlementsInfinite as unknown as Mock).mockReturnValue(
+      settlementQuery([makeSettlement({ createdAt: '2026-07-10T00:00:00.000Z' })]),
+    );
+    render(<ExpenseList friendId="ana" />);
+
+    expect(screen.getByText('Friend expense')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Everything below is covered by recorded payments.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('reveal state is local to the mount and resets when the component remounts', () => {
+    const older: ExpenseDto = {
+      ...makeExpense(
+        [{ user: ana, amount: 1600 }],
+        [{ user: ana, amount: 1600, shares: null, percentBps: null, adjustment: null }],
+      ),
+      id: 'older',
+      description: 'Older dinner',
+      createdAt: '2026-07-05T00:00:00.000Z',
+    };
+    const newer: ExpenseDto = {
+      ...makeExpense(
+        [{ user: ana, amount: 1600 }],
+        [{ user: ana, amount: 1600, shares: null, percentBps: null, adjustment: null }],
+      ),
+      id: 'newer',
+      description: 'Newer dinner',
+      createdAt: '2026-07-15T00:00:00.000Z',
+    };
+    const { unmount } = renderGroupList(
+      [older, newer],
+      [makeSettlement({ createdAt: '2026-07-10T00:00:00.000Z' })],
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Show settled expenses/i }));
+    expect(screen.getByText('Older dinner')).toBeInTheDocument();
+
+    unmount();
+    renderGroupList(
+      [older, newer],
+      [makeSettlement({ createdAt: '2026-07-10T00:00:00.000Z' })],
+    );
+
+    // After remount (e.g. switching away and back to the Expenses tab), default
+    // collapsed state is restored.
+    expect(screen.queryByText('Older dinner')).not.toBeInTheDocument();
   });
 });

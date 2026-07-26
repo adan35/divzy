@@ -39,6 +39,20 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/lib/auth-store', () => ({ useAuth: vi.fn() }));
 vi.mock('@/lib/hooks', () => ({
   useGroup: vi.fn(),
+  useGroupBalances: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+  useGroupWhiteboard: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
   useArchiveGroup: vi.fn(),
   useLeaveGroup: vi.fn(),
   useUnarchiveGroup: vi.fn(),
@@ -65,6 +79,7 @@ vi.mock('@/components/groups/totals-view', () => ({
     return <div data-testid="totals-view" />;
   },
 }));
+vi.mock('@/components/groups/group-whiteboard', () => ({ GroupWhiteboard: () => null }));
 vi.mock('@/components/expenses/expense-list', () => ({
   ExpenseList: (props: { groupId?: string; friendId?: string }) => {
     capturedExpenseListProps = props;

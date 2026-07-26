@@ -27,9 +27,9 @@ export function BalanceSentences({
   }
   return (
     <div className="space-y-0.5">
-      {entries.map((b) => (
+      {entries.map((b, i) => (
         <p
-          key={b.currency}
+          key={`${b.currency}-${i}`}
           className={cn(
             'text-sm font-medium tabular-nums',
             b.amount > 0 ? 'text-pos' : 'text-neg',

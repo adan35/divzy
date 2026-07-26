@@ -190,6 +190,7 @@ model Group {
   settlements Settlement[]
   activities ActivityLog[]
   recurring  RecurringExpense[]
+  whiteboard GroupWhiteboard?
 }
 
 model GroupMember {
@@ -204,6 +205,21 @@ model GroupMember {
 
   @@unique([groupId, userId])
   @@index([userId])
+}
+
+/// Single shared plain-text note per group (WI-087). Owned by social-groups.
+/// `updatedById` is a bare scalar (NO @relation to User) to avoid forcing an
+/// opposite-relation field onto the auth-owned User model — same pattern as
+/// FriendCode.userId (WI-040). Lazy creation: no row exists until first edit.
+model GroupWhiteboard {
+  id          String   @id @default(cuid())
+  groupId     String   @unique
+  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  body        String   @default("")
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  @@index([groupId])
 }
 
 // ---------------------------------------------------------------------------

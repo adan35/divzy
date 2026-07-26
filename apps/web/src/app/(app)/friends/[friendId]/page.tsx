@@ -200,8 +200,8 @@ export default function FriendDetailPage() {
                         className="block text-2xl font-semibold"
                       />
                       <div className="space-y-0.5">
-                        {displayEntries.map((b) => (
-                          <p key={b.currency} className="text-sm">
+                        {displayEntries.map((b, i) => (
+                          <p key={`${b.currency}-${i}`} className="text-sm">
                             <BalanceSentence name={short} amount={b.amount} currency={b.currency} />
                           </p>
                         ))}

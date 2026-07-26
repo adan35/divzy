@@ -102,9 +102,9 @@ function FriendRow({
           </div>
           {amountEntries.length > 0 && (
             <div className="flex shrink-0 flex-col items-end gap-0.5">
-              {amountEntries.map((b) => (
+              {amountEntries.map((b, i) => (
                 <MoneyText
-                  key={b.currency}
+                  key={`${b.currency}-${i}`}
                   amount={b.amount}
                   currency={b.currency}
                   mode="signed-color"

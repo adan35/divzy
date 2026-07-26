@@ -1,5 +1,5 @@
 // Build-stage TDD coverage for spec-WI-059 — verifies TotalsView mounts
-// GroupMonthlyChart in the non-empty branch, before the per-currency tiles,
+// GroupMonthlyChart in the non-empty branch, after the per-currency tiles,
 // with the group's home currency (not any viewer-default). GroupMonthlyChart
 // itself is mocked — its own data/loading/error/empty behavior is covered by
 // group-monthly-chart.test.tsx.
@@ -74,7 +74,7 @@ describe('TotalsView — mounts GroupMonthlyChart (WI-059)', () => {
     vi.clearAllMocks();
   });
 
-  it('renders the chart in the group home currency, before the per-currency tiles, when the group has expenses', () => {
+  it('renders the chart in the group home currency, after the per-currency tiles, when the group has expenses', () => {
     mockedUseGroup.mockReturnValue({
       data: groupFixture(),
       isLoading: false,
@@ -95,10 +95,10 @@ describe('TotalsView — mounts GroupMonthlyChart (WI-059)', () => {
     expect(chart).toHaveAttribute('data-group-id', 'g1');
     expect(chart).toHaveAttribute('data-currency', 'PKR');
 
-    // Mounted before the per-currency tiles, per spec §3.
+    // Mounted after the per-currency tiles, per WI-085.
     const tileLabel = screen.getByText(/Total spent · PKR/);
     expect(
-      chart.compareDocumentPosition(tileLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+      tileLabel.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 

@@ -1,13 +1,7 @@
-// spec-WI-046 — Delete group entry point wiring on the group detail page,
-// mirroring the existing archive/leave ConfirmDialog pattern. On success:
-// navigate away (back to /groups) and invalidate the group/groups-list cache
-// (covered by useDeleteGroup itself, exercised here via the mocked mutate
-// call). On 409 OUTSTANDING_BALANCE, the dialog stays open and the API's
-// message surfaces via the hook's own toast (no special-cased handling here).
+// spec-WI-087 — Whiteboard tab mount point on the group detail page.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { toast } from 'sonner';
 import type { GroupDto } from '@divzy/shared';
 import GroupPage from './page';
 import { useAuth } from '@/lib/auth-store';
@@ -15,14 +9,16 @@ import {
   useArchiveGroup,
   useDeleteGroup,
   useGroup,
+  useGroupBalances,
   useLeaveGroup,
   useUnarchiveGroup,
 } from '@/lib/hooks';
 
-const pushMock = vi.fn();
+let capturedWhiteboardProps: { groupId?: string; enabled?: boolean } | null = null;
+
 vi.mock('next/navigation', () => ({
   useParams: () => ({ groupId: 'group-1' }),
-  useRouter: () => ({ push: pushMock, back: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/lib/auth-store', () => ({ useAuth: vi.fn() }));
@@ -35,37 +31,29 @@ vi.mock('@/lib/hooks', () => ({
     error: null,
     refetch: vi.fn(),
   })),
-  useGroupWhiteboard: vi.fn(() => ({
-    data: undefined,
-    isLoading: false,
-    isError: false,
-    error: null,
-    refetch: vi.fn(),
-  })),
   useArchiveGroup: vi.fn(),
   useLeaveGroup: vi.fn(),
   useUnarchiveGroup: vi.fn(),
   useDeleteGroup: vi.fn(),
 }));
-vi.mock('@/components/groups/group-header', () => ({
-  GroupHeader: (props: { onDelete: () => void; isAdmin: boolean }) => (
-    <button type="button" onClick={props.onDelete} disabled={!props.isAdmin}>
-      trigger-delete
-    </button>
-  ),
-}));
+vi.mock('@/components/groups/group-header', () => ({ GroupHeader: () => null }));
 vi.mock('@/components/groups/balances-view', () => ({ BalancesView: () => null }));
+vi.mock('@/components/groups/confirm-dialog', () => ({ ConfirmDialog: () => null }));
 vi.mock('@/components/groups/group-form-dialog', () => ({ GroupFormDialog: () => null }));
 vi.mock('@/components/groups/invite-dialog', () => ({ InviteDialog: () => null }));
 vi.mock('@/components/groups/totals-view', () => ({ TotalsView: () => null }));
-vi.mock('@/components/groups/group-whiteboard', () => ({ GroupWhiteboard: () => null }));
+vi.mock('@/components/groups/group-whiteboard', () => ({
+  GroupWhiteboard: (props: { groupId: string; enabled?: boolean }) => {
+    capturedWhiteboardProps = props;
+    return <div data-testid="group-whiteboard" />;
+  },
+}));
 vi.mock('@/components/expenses/expense-editor', () => ({ ExpenseEditorDialog: () => null }));
 vi.mock('@/components/expenses/expense-list', () => ({ ExpenseList: () => null }));
 vi.mock('@/components/settle/settle-dialog', () => ({ SettleUpDialog: () => null }));
 
 const mockedUseAuth = vi.mocked(useAuth);
 const mockedUseGroup = vi.mocked(useGroup);
-const mockedUseDeleteGroup = vi.mocked(useDeleteGroup);
 
 function fixtureGroup(overrides: Partial<GroupDto> = {}): GroupDto {
   return {
@@ -87,10 +75,9 @@ function fixtureGroup(overrides: Partial<GroupDto> = {}): GroupDto {
   };
 }
 
-describe('GroupPage — Delete group wiring (spec-WI-046)', () => {
-  const deleteMutate = vi.fn();
-
+describe('GroupPage — WI-087 Whiteboard tab mount point', () => {
   beforeEach(() => {
+    capturedWhiteboardProps = null;
     // @ts-expect-error -- test setup only
     mockedUseAuth.mockReturnValue({ user: { id: 'me' } });
     // @ts-expect-error -- test setup only
@@ -100,7 +87,7 @@ describe('GroupPage — Delete group wiring (spec-WI-046)', () => {
     // @ts-expect-error -- test setup only
     vi.mocked(useUnarchiveGroup).mockReturnValue({ mutate: vi.fn(), isPending: false });
     // @ts-expect-error -- test setup only
-    mockedUseDeleteGroup.mockReturnValue({ mutate: deleteMutate, isPending: false });
+    vi.mocked(useDeleteGroup).mockReturnValue({ mutate: vi.fn(), isPending: false });
     // @ts-expect-error -- test setup only (partial UseQueryResult)
     mockedUseGroup.mockReturnValue({
       data: fixtureGroup(),
@@ -115,43 +102,26 @@ describe('GroupPage — Delete group wiring (spec-WI-046)', () => {
     vi.clearAllMocks();
   });
 
-  it('opens a confirm dialog warning the action is permanent when Delete group is triggered', async () => {
-    const user = userEvent.setup();
+  it('renders a Whiteboard tab alongside Expenses/Balances/Totals', () => {
     render(<GroupPage />);
 
-    await user.click(screen.getByText('trigger-delete'));
-
-    expect(screen.getByRole('heading', { name: /delete lisbon trip\?/i })).toBeInTheDocument();
-    expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Whiteboard' })).toBeInTheDocument();
+    expect(screen.getAllByRole('tablist')).toHaveLength(1);
   });
 
-  it('calls useDeleteGroup and navigates to /groups on success', async () => {
-    deleteMutate.mockImplementation((_groupId: string, opts?: { onSuccess?: () => void }) => {
-      opts?.onSuccess?.();
-    });
-    const user = userEvent.setup();
+  it('mounts GroupWhiteboard with enabled=false before the tab is selected', () => {
     render(<GroupPage />);
 
-    await user.click(screen.getByText('trigger-delete'));
-    await user.click(screen.getByRole('button', { name: /delete group/i }));
-
-    expect(deleteMutate).toHaveBeenCalledWith('group-1', expect.anything());
-    expect(toast.success).toHaveBeenCalled();
-    expect(pushMock).toHaveBeenCalledWith('/groups');
+    expect(capturedWhiteboardProps).toEqual({ groupId: 'group-1', enabled: false });
   });
 
-  it('keeps the dialog open and does not navigate when the mutation errors (e.g. 409 OUTSTANDING_BALANCE)', async () => {
-    deleteMutate.mockImplementation(() => {
-      // onError isn't invoked here — the hook's own toastError handles it;
-      // the page must not navigate or close the dialog on failure.
-    });
+  it('enables the whiteboard query when the Whiteboard tab is selected', async () => {
     const user = userEvent.setup();
     render(<GroupPage />);
 
-    await user.click(screen.getByText('trigger-delete'));
-    await user.click(screen.getByRole('button', { name: /delete group/i }));
+    await user.click(screen.getByRole('tab', { name: 'Whiteboard' }));
 
-    expect(pushMock).not.toHaveBeenCalledWith('/groups');
-    expect(screen.getByRole('heading', { name: /delete lisbon trip\?/i })).toBeInTheDocument();
+    expect(screen.getByTestId('group-whiteboard')).toBeInTheDocument();
+    expect(capturedWhiteboardProps).toEqual({ groupId: 'group-1', enabled: true });
   });
 });

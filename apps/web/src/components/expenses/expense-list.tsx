@@ -10,7 +10,13 @@ import {
   type ExpenseDto,
 } from '@divzy/shared';
 import { useAuth } from '@/lib/auth-store';
-import { errorMessage, useExpensesInfinite, useUsedCategories, type ExpenseFilters } from '@/lib/hooks';
+import {
+  errorMessage,
+  useExpensesInfinite,
+  useSettlementsInfinite,
+  useUsedCategories,
+  type ExpenseFilters,
+} from '@/lib/hooks';
 import { cn } from '@/lib/utils';
 import { AvatarStack } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -57,6 +63,136 @@ interface MonthGroup {
   items: ExpenseDto[];
 }
 
+function toMonthGroups(items: ExpenseDto[]): MonthGroup[] {
+  const groups: MonthGroup[] = [];
+  for (const expense of items) {
+    const date = parseISO(expense.date);
+    const key = format(date, 'yyyy-MM');
+    const last = groups[groups.length - 1];
+    if (last && last.key === key) {
+      last.items.push(expense);
+    } else {
+      groups.push({ key, label: format(date, 'MMMM yyyy'), items: [expense] });
+    }
+  }
+  return groups;
+}
+
+function ExpenseMonthGroups({
+  groups,
+  groupId,
+  meId,
+  onSelect,
+}: {
+  groups: MonthGroup[];
+  groupId?: string;
+  meId?: string;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <>
+      {groups.map((month) => (
+        <section key={month.key} aria-label={month.label}>
+          <h3 className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-ink-3">
+            {month.label}
+          </h3>
+          <div className="divide-y divide-hairline rounded-xl2 border border-hairline bg-surface shadow-sm dark:shadow-none">
+            {month.items.map((expense) => {
+              const lens = myLens(expense, meId);
+              const date = parseISO(expense.date);
+              return (
+                <button
+                  key={expense.id}
+                  type="button"
+                  onClick={() => onSelect(expense.id)}
+                  className="flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors first:rounded-t-xl2 last:rounded-b-xl2 hover:bg-surface-2"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="flex w-10 shrink-0 flex-col items-center rounded-lg bg-surface-2 py-1"
+                  >
+                    <span className="text-[10px] font-medium uppercase leading-tight text-ink-3">
+                      {format(date, 'MMM')}
+                    </span>
+                    <span className="text-sm font-semibold leading-tight tabular-nums text-ink">
+                      {format(date, 'd')}
+                    </span>
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-lg"
+                  >
+                    {categoryInfo(expense.category).emoji}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-ink">
+                      {expense.description}
+                    </span>
+                    <span className="mt-0.5 flex items-center gap-1.5 text-[13px] text-ink-3">
+                      <AvatarStack users={expense.payers.map((p) => p.user)} size="xs" max={3} />
+                      <span className="truncate">
+                        {payerName(expense, meId)} paid{' '}
+                        <MoneyText amount={expense.amount} currency={expense.currency} />
+                        {!groupId && expense.group && (
+                          <>
+                            {' '}· {expense.group.emoji} {expense.group.name}
+                          </>
+                        )}
+                        {/* Converted equivalent (WI-014) — omitted, not zeroed, when
+                            the server couldn't resolve a rate for this row. */}
+                        {expense.convertedAmount !== undefined && (
+                          <span className="ml-1 inline-flex items-center gap-1">
+                            <span aria-hidden="true">≈</span>
+                            <MoneyText
+                              amount={expense.convertedAmount}
+                              currency={expense.convertedCurrency!}
+                            />
+                            {expense.isApproximateRate && (
+                              <span
+                                className="font-semibold text-warn"
+                                title="Approximate — today's rate; the rate on this expense's date isn't available"
+                                aria-label="Approximate — today's rate; the rate on this expense's date isn't available"
+                              >
+                                *
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 flex-col items-end">
+                    {!lens.involved ? (
+                      <span className="text-xs text-ink-3">not involved</span>
+                    ) : lens.net === 0 ? (
+                      <span className="text-xs text-ink-3">no balance</span>
+                    ) : (
+                      <>
+                        <span className="text-[11px] leading-tight text-ink-3">
+                          {lens.net > 0 ? 'you lent' : 'you borrowed'}
+                        </span>
+                        <MoneyText
+                          amount={Math.abs(lens.net)}
+                          currency={expense.currency}
+                          className={cn(
+                            'text-sm font-semibold leading-tight',
+                            lens.net > 0 ? 'text-pos' : 'text-neg',
+                          )}
+                        />
+                        <span className="text-[10px] leading-tight text-ink-3">at the time</span>
+                      </>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </>
+  );
+}
+
 /**
  * Infinite expense list with debounced search, category filter chips and
  * month headers. Rows open the full detail dialog.
@@ -68,6 +204,7 @@ export function ExpenseList({ groupId, friendId, emptyHint }: ExpenseListProps) 
   const [category, setCategory] = useState<ExpenseCategory | undefined>(undefined);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [showSettled, setShowSettled] = useState(false);
 
   // Debounce the search box (300ms) into the actual query filter.
   useEffect(() => {
@@ -82,6 +219,10 @@ export function ExpenseList({ groupId, friendId, emptyHint }: ExpenseListProps) 
     search: debouncedSearch || undefined,
   };
   const query = useExpensesInfinite(filters);
+  const settlementsQuery = useSettlementsInfinite(
+    { groupId },
+    { enabled: !!groupId },
+  );
 
   // WI-063 + WI-064: every mount (group, friend, and the unscoped "All
   // expenses" page) narrows the pill row to categories actually in use in
@@ -105,20 +246,46 @@ export function ExpenseList({ groupId, friendId, emptyHint }: ExpenseListProps) 
     [query.data],
   );
 
-  const monthGroups = useMemo<MonthGroup[]>(() => {
-    const groups: MonthGroup[] = [];
-    for (const expense of expenses) {
-      const date = parseISO(expense.date);
-      const key = format(date, 'yyyy-MM');
-      const last = groups[groups.length - 1];
-      if (last && last.key === key) {
-        last.items.push(expense);
-      } else {
-        groups.push({ key, label: format(date, 'MMMM yyyy'), items: [expense] });
+  // WI-089: client-side settled classification for group expense lists.
+  // An expense is considered settled in its currency if it was created at or
+  // before the latest non-deleted settlement in that currency for this group.
+  // Classification is intentionally client-side and approximate: a settlement
+  // record does not track which specific expenses it covers.
+  const latestSettlementAt = useMemo(() => {
+    if (!groupId || !settlementsQuery.data) return new Map<string, string>();
+    const map = new Map<string, string>();
+    const settlements = settlementsQuery.data.pages.flatMap((page) => page.items);
+    for (const settlement of settlements) {
+      if (settlement.deletedAt) continue;
+      const current = map.get(settlement.currency);
+      if (current === undefined || settlement.createdAt > current) {
+        map.set(settlement.currency, settlement.createdAt);
       }
     }
-    return groups;
-  }, [expenses]);
+    return map;
+  }, [groupId, settlementsQuery.data]);
+
+  const { unsettledExpenses, settledExpenses } = useMemo(() => {
+    const unsettled: ExpenseDto[] = [];
+    const settled: ExpenseDto[] = [];
+    for (const expense of expenses) {
+      // The list endpoint already filters out soft deletes, but guard against
+      // stale client data: deleted expenses must never render.
+      if (expense.deletedAt !== null) {
+        continue;
+      }
+      const cutoff = latestSettlementAt.get(expense.currency);
+      if (cutoff !== undefined && expense.createdAt <= cutoff) {
+        settled.push(expense);
+      } else {
+        unsettled.push(expense);
+      }
+    }
+    return { unsettledExpenses: unsettled, settledExpenses: settled };
+  }, [expenses, latestSettlementAt]);
+
+  const unsettledMonthGroups = useMemo(() => toMonthGroups(unsettledExpenses), [unsettledExpenses]);
+  const settledMonthGroups = useMemo(() => toMonthGroups(settledExpenses), [settledExpenses]);
 
   // Load-more sentinel.
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -138,7 +305,7 @@ export function ExpenseList({ groupId, friendId, emptyHint }: ExpenseListProps) 
     observer.observe(el);
     return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query.hasNextPage, query.fetchNextPage, monthGroups.length]);
+  }, [query.hasNextPage, query.fetchNextPage, unsettledMonthGroups.length + settledMonthGroups.length]);
 
   const hasFilters = debouncedSearch.length > 0 || category !== undefined;
 
@@ -225,101 +392,61 @@ export function ExpenseList({ groupId, friendId, emptyHint }: ExpenseListProps) 
             }
           />
         )
+      ) : unsettledExpenses.length === 0 && settledExpenses.length > 0 && !showSettled ? (
+        <EmptyState
+          emoji="🧾"
+          title="All caught up"
+          hint="Every expense in this group has been covered by recorded payments."
+          action={
+            <Button variant="secondary" size="sm" onClick={() => setShowSettled(true)}>
+              Show settled expenses
+            </Button>
+          }
+        />
       ) : (
         <div className="space-y-5">
-          {monthGroups.map((month) => (
-            <section key={month.key} aria-label={month.label}>
-              <h3 className="mb-2 px-1 text-xs font-medium uppercase tracking-wide text-ink-3">
-                {month.label}
-              </h3>
-              <div className="divide-y divide-hairline rounded-xl2 border border-hairline bg-surface shadow-sm dark:shadow-none">
-                {month.items.map((expense) => {
-                  const lens = myLens(expense, me?.id);
-                  const date = parseISO(expense.date);
-                  return (
-                    <button
-                      key={expense.id}
-                      type="button"
-                      onClick={() => setDetailId(expense.id)}
-                      className="flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors first:rounded-t-xl2 last:rounded-b-xl2 hover:bg-surface-2"
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="flex w-10 shrink-0 flex-col items-center rounded-lg bg-surface-2 py-1"
-                      >
-                        <span className="text-[10px] font-medium uppercase leading-tight text-ink-3">
-                          {format(date, 'MMM')}
-                        </span>
-                        <span className="text-sm font-semibold leading-tight tabular-nums text-ink">
-                          {format(date, 'd')}
-                        </span>
-                      </span>
-                      <span
-                        aria-hidden="true"
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-lg"
-                      >
-                        {categoryInfo(expense.category).emoji}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium text-ink">
-                          {expense.description}
-                        </span>
-                        <span className="mt-0.5 flex items-center gap-1.5 text-[13px] text-ink-3">
-                          <AvatarStack users={expense.payers.map((p) => p.user)} size="xs" max={3} />
-                          <span className="truncate">
-                            {payerName(expense, me?.id)} paid{' '}
-                            <MoneyText amount={expense.amount} currency={expense.currency} />
-                            {!groupId && expense.group && (
-                              <> · {expense.group.emoji} {expense.group.name}</>
-                            )}
-                            {/* Converted equivalent (WI-014) — omitted, not zeroed, when
-                                the server couldn't resolve a rate for this row. */}
-                            {expense.convertedAmount !== undefined && (
-                              <span className="ml-1 inline-flex items-center gap-1">
-                                <span aria-hidden="true">≈</span>
-                                <MoneyText amount={expense.convertedAmount} currency={expense.convertedCurrency!} />
-                                {expense.isApproximateRate && (
-                                  <span
-                                    className="font-semibold text-warn"
-                                    title="Approximate — today's rate; the rate on this expense's date isn't available"
-                                    aria-label="Approximate — today's rate; the rate on this expense's date isn't available"
-                                  >
-                                    *
-                                  </span>
-                                )}
-                              </span>
-                            )}
-                          </span>
-                        </span>
-                      </span>
-                      <span className="flex shrink-0 flex-col items-end">
-                        {!lens.involved ? (
-                          <span className="text-xs text-ink-3">not involved</span>
-                        ) : lens.net === 0 ? (
-                          <span className="text-xs text-ink-3">no balance</span>
-                        ) : (
-                          <>
-                            <span className="text-[11px] leading-tight text-ink-3">
-                              {lens.net > 0 ? 'you lent' : 'you borrowed'}
-                            </span>
-                            <MoneyText
-                              amount={Math.abs(lens.net)}
-                              currency={expense.currency}
-                              className={cn(
-                                'text-sm font-semibold leading-tight',
-                                lens.net > 0 ? 'text-pos' : 'text-neg',
-                              )}
-                            />
-                            <span className="text-[10px] leading-tight text-ink-3">at the time</span>
-                          </>
-                        )}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
+          <ExpenseMonthGroups
+            groups={unsettledMonthGroups}
+            groupId={groupId}
+            meId={me?.id}
+            onSelect={setDetailId}
+          />
+
+          {settledExpenses.length > 0 && (
+            <div className="flex justify-center">
+              {showSettled ? (
+                <button
+                  type="button"
+                  onClick={() => setShowSettled(false)}
+                  className="text-[13px] font-medium text-brand hover:underline"
+                >
+                  Hide settled expenses
+                </button>
+              ) : (
+                <span className="text-center text-sm text-ink-3">
+                  Everything below is covered by recorded payments.{' '}
+                  <button
+                    type="button"
+                    onClick={() => setShowSettled(true)}
+                    className="font-medium text-brand hover:underline"
+                  >
+                    Show settled expenses
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
+
+          {showSettled && settledExpenses.length > 0 && (
+            <div className="space-y-5">
+              <ExpenseMonthGroups
+                groups={settledMonthGroups}
+                groupId={groupId}
+                meId={me?.id}
+                onSelect={setDetailId}
+              />
+            </div>
+          )}
 
           {/* Infinite-scroll sentinel + fallback button */}
           <div ref={sentinelRef} aria-hidden="true" />

@@ -22,6 +22,7 @@ import type {
   GroupBalancesDto,
   GroupDto,
   GroupSummaryDto,
+  GroupWhiteboardDto,
   JoinGroupInput,
   ListExpensesQuery,
   ListSettlementsQuery,
@@ -40,6 +41,7 @@ import type {
   SettlementDto,
   UpdateExpenseInput,
   UpdateGroupInput,
+  UpdateGroupWhiteboardInput,
   UpdateMeInput,
   UpdateMemberInput,
   UpdateNotificationPreferencesInput,
@@ -152,6 +154,12 @@ export class DivzyClient {
      */
     delete: (groupId: string) =>
       this.http.request<void>('POST', `${API}/groups/${groupId}/delete`),
+    /** WI-087: read the group's shared plain-text whiteboard. */
+    whiteboard: (groupId: string) =>
+      this.http.request<GroupWhiteboardDto>('GET', `${API}/groups/${groupId}/whiteboard`),
+    /** WI-087: replace the group's shared plain-text whiteboard (any active member). */
+    updateWhiteboard: (groupId: string, input: UpdateGroupWhiteboardInput) =>
+      this.http.request<GroupWhiteboardDto>('PUT', `${API}/groups/${groupId}/whiteboard`, { body: input }),
     balances: (groupId: string) =>
       this.http.request<GroupBalancesDto>('GET', `${API}/groups/${groupId}/balances`),
     /** URL for CSV export (open in browser / share sheet; token via query not needed — use fetch with auth). */

@@ -126,13 +126,6 @@ export function TotalsView({ groupId }: TotalsViewProps) {
 
   return (
     <div className="space-y-6">
-      {/* WI-059: monthly total-expenditure chart, one shared group-wide
-          figure requested in the group's home currency (D3), not the
-          viewer's default — see group-monthly-chart.tsx. Mounted only in
-          this non-empty branch, inheriting the `expenses.length === 0`
-          guard above. */}
-      <GroupMonthlyChart groupId={groupId} currency={groupCurrency} />
-
       {/* Per-currency spend tiles */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {totalEntries.map(([currency, { amount, count }]) => (
@@ -185,6 +178,14 @@ export function TotalsView({ groupId }: TotalsViewProps) {
           })}
         </CardContent>
       </Card>
+
+      {/* WI-059: monthly total-expenditure chart, one shared group-wide
+          figure requested in the group's home currency (D3), not the
+          viewer's default — see group-monthly-chart.tsx. Mounted only in
+          this non-empty branch, inheriting the `expenses.length === 0`
+          guard above. WI-085: chart now renders after the tab's other
+          content. */}
+      <GroupMonthlyChart groupId={groupId} currency={groupCurrency} />
     </div>
   );
 }

@@ -119,6 +119,13 @@ export interface GroupSummaryDto {
   settled: boolean;
 }
 
+/** WI-087: a group's single shared plain-text whiteboard note. */
+export interface GroupWhiteboardDto {
+  body: string;
+  updatedBy: PublicUserDto | null;
+  updatedAt: string | null;
+}
+
 export interface ExpensePayerDto {
   user: PublicUserDto;
   amount: number;

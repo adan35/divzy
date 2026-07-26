@@ -51,6 +51,12 @@ export interface GroupHeaderProps {
   group: GroupDto;
   isAdmin: boolean;
   /**
+   * WI-086: true when the caller has an outstanding payable position in this
+   * group (any negative per-currency net). The Settle Up button gets an amber
+   * attention treatment; false/absent keeps the neutral outline styling.
+   */
+  iOwe?: boolean;
+  /**
    * Opens the existing, unmodified SettleUpDialog scoped to this group, no
    * prefill (story-WI-003). Rendered unconditionally — visible and enabled
    * regardless of the active tab or archived state, same as "Invite" today.
@@ -67,6 +73,7 @@ export interface GroupHeaderProps {
 export function GroupHeader({
   group,
   isAdmin,
+  iOwe,
   onSettleUp,
   onInvite,
   onEdit,
@@ -178,7 +185,16 @@ export function GroupHeader({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
-        <Button variant="outline" onClick={onSettleUp}>
+        <Button
+          variant="outline"
+          data-owe={iOwe ? 'true' : undefined}
+          className={
+            iOwe
+              ? 'border-warn bg-warn-soft text-warn hover:bg-warn-soft/80'
+              : undefined
+          }
+          onClick={onSettleUp}
+        >
           <HandCoins className="h-4 w-4" aria-hidden="true" />
           Settle Up
         </Button>

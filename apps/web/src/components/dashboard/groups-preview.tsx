@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useState } from 'react';
+import { HandCoins, Plus } from 'lucide-react';
 import type { CurrencyAmount, GroupSummaryDto } from '@divzy/shared';
 import { matchesBalanceFilter } from '@divzy/shared';
 import { useGroups } from '@/lib/hooks';
@@ -9,9 +11,12 @@ import { cn } from '@/lib/utils';
 import { collapsedBalanceEntries } from '@/lib/balance-display';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Dropdown, DropdownItem, DropdownSeparator } from '@/components/ui/dropdown';
 import { EmptyState } from '@/components/ui/empty-state';
 import { MoneyText } from '@/components/ui/money-text';
 import { SkeletonList } from '@/components/ui/skeleton';
+import { SettleUpDialog, type SettleUpPrefill } from '@/components/settle/settle-dialog';
+import { UnsettledPaymentsDialog } from './unsettled-payments-dialog';
 import { balanceMagnitude } from './balance-utils';
 import { SectionError } from './section-error';
 import { SectionHeader } from './section-header';
@@ -33,9 +38,9 @@ function GroupNet({ balances }: { balances: CurrencyAmount[] }) {
 
   return (
     <span className="flex shrink-0 flex-col items-end gap-0.5 text-right">
-      {visible.map((b) => (
+      {visible.map((b, i) => (
         <span
-          key={b.currency}
+          key={`${b.currency}-${i}`}
           className={cn('text-[13px] font-medium', b.amount > 0 ? 'text-pos' : 'text-neg')}
         >
           {b.amount > 0 ? 'You are owed ' : 'You owe '}
@@ -79,10 +84,18 @@ function GroupRow({ group }: { group: GroupSummaryDto }) {
  * spec-WI-057: only groups where the viewer has a real outstanding balance
  * appear — filtered via `matchesBalanceFilter(yourBalancesNative, 'outstanding')`,
  * never the group-wide `settled` flag (WI-028), which is not viewer-specific.
+ *
+ * spec-WI-088: the section header hosts a "+" dropdown with "Create group" and
+ * "Unsettled payments" options. The existing preview list remains unchanged.
  */
 export function GroupsPreview() {
   const groups = useGroups();
   const router = useRouter();
+
+  const [unsettledOpen, setUnsettledOpen] = useState(false);
+  const [settleOpen, setSettleOpen] = useState(false);
+  const [settlePrefill, setSettlePrefill] = useState<SettleUpPrefill | undefined>(undefined);
+  const [settleGroupId, setSettleGroupId] = useState<string | undefined>(undefined);
 
   const active = (groups.data ?? []).filter((g) => g.archivedAt === null);
   const outstanding = active.filter((g) =>
@@ -98,9 +111,39 @@ export function GroupsPreview() {
     )
     .slice(0, PREVIEW_COUNT);
 
+  const headerAction = (
+    <Dropdown
+      align="end"
+      trigger={
+        <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink">
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          <span className="sr-only">Group actions</span>
+        </span>
+      }
+    >
+      <DropdownItem onSelect={() => router.push('/groups?new=1')} icon={<Plus className="h-4 w-4" />}>
+        Create group
+      </DropdownItem>
+      <DropdownSeparator />
+      <DropdownItem
+        onSelect={() => setUnsettledOpen(true)}
+        icon={<HandCoins className="h-4 w-4" />}
+      >
+        Unsettled payments
+      </DropdownItem>
+    </Dropdown>
+  );
+
+  function handleSettleUp(payload: { groupId: string; prefill: SettleUpPrefill }) {
+    setUnsettledOpen(false);
+    setSettleGroupId(payload.groupId);
+    setSettlePrefill(payload.prefill);
+    setSettleOpen(true);
+  }
+
   return (
     <section aria-label="Your groups">
-      <SectionHeader title="Your groups" href="/groups" />
+      <SectionHeader title="Your groups" href="/groups" action={headerAction} />
       {groups.isPending ? (
         <SkeletonList rows={3} />
       ) : groups.isError ? (
@@ -131,6 +174,25 @@ export function GroupsPreview() {
           ))}
         </div>
       )}
+
+      <UnsettledPaymentsDialog
+        open={unsettledOpen}
+        onOpenChange={setUnsettledOpen}
+        onSettleUp={handleSettleUp}
+      />
+
+      <SettleUpDialog
+        open={settleOpen}
+        onOpenChange={(open) => {
+          setSettleOpen(open);
+          if (!open) {
+            setSettlePrefill(undefined);
+            setSettleGroupId(undefined);
+          }
+        }}
+        groupId={settleGroupId}
+        prefill={settlePrefill}
+      />
     </section>
   );
 }

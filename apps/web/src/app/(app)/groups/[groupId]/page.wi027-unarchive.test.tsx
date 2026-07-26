@@ -21,6 +21,20 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/lib/auth-store', () => ({ useAuth: vi.fn() }));
 vi.mock('@/lib/hooks', () => ({
   useGroup: vi.fn(),
+  useGroupBalances: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
+  useGroupWhiteboard: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  })),
   useArchiveGroup: vi.fn(),
   useLeaveGroup: vi.fn(),
   useUnarchiveGroup: vi.fn(),
@@ -32,6 +46,7 @@ vi.mock('@/components/groups/confirm-dialog', () => ({ ConfirmDialog: () => null
 vi.mock('@/components/groups/group-form-dialog', () => ({ GroupFormDialog: () => null }));
 vi.mock('@/components/groups/invite-dialog', () => ({ InviteDialog: () => null }));
 vi.mock('@/components/groups/totals-view', () => ({ TotalsView: () => null }));
+vi.mock('@/components/groups/group-whiteboard', () => ({ GroupWhiteboard: () => null }));
 vi.mock('@/components/expenses/expense-editor', () => ({ ExpenseEditorDialog: () => null }));
 vi.mock('@/components/expenses/expense-list', () => ({ ExpenseList: () => null }));
 vi.mock('@/components/settle/settle-dialog', () => ({ SettleUpDialog: () => null }));

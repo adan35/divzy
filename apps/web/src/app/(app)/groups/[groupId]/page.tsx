@@ -9,6 +9,7 @@ import {
   useArchiveGroup,
   useDeleteGroup,
   useGroup,
+  useGroupBalances,
   useLeaveGroup,
   useUnarchiveGroup,
 } from '@/lib/hooks';
@@ -21,11 +22,12 @@ import { BalancesView } from '@/components/groups/balances-view';
 import { ConfirmDialog } from '@/components/groups/confirm-dialog';
 import { GroupFormDialog } from '@/components/groups/group-form-dialog';
 import { GroupHeader } from '@/components/groups/group-header';
+import { GroupWhiteboard } from '@/components/groups/group-whiteboard';
 import { InviteDialog } from '@/components/groups/invite-dialog';
 import { TotalsView } from '@/components/groups/totals-view';
 import { ExpenseEditorDialog } from '@/components/expenses/expense-editor';
 import { ExpenseList } from '@/components/expenses/expense-list';
-import { SettleUpDialog } from '@/components/settle/settle-dialog';
+import { SettleUpDialog, type SettleUpPrefill } from '@/components/settle/settle-dialog';
 
 /**
  * WI-070: header-only loading placeholder. `<Tabs>` and its content
@@ -48,7 +50,7 @@ function GroupHeaderSkeleton() {
   );
 }
 
-type GroupTab = 'expenses' | 'balances' | 'totals';
+type GroupTab = 'expenses' | 'balances' | 'totals' | 'whiteboard';
 
 export default function GroupPage() {
   const params = useParams<{ groupId: string }>();
@@ -57,6 +59,7 @@ export default function GroupPage() {
   const { user: me } = useAuth();
 
   const groupQuery = useGroup(groupId);
+  const balancesQuery = useGroupBalances(groupId);
   const archiveGroup = useArchiveGroup();
   const leaveGroup = useLeaveGroup();
   const unarchiveGroup = useUnarchiveGroup();
@@ -64,6 +67,7 @@ export default function GroupPage() {
 
   const [tab, setTab] = useState<GroupTab>('expenses');
   const [settleOpen, setSettleOpen] = useState(false);
+  const [settlePrefill, setSettlePrefill] = useState<SettleUpPrefill | undefined>(undefined);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -105,6 +109,12 @@ export default function GroupPage() {
   // WI-070: group is possibly undefined here — only while groupQuery is
   // still loading (the isError/no-data terminal case already returned above).
   const group = groupQuery.data;
+  const iOwe =
+    me !== null &&
+    (balancesQuery.data?.members
+      .find((m) => m.user.id === me.id)
+      ?.balances.some((b) => b.amount < 0) ??
+      false);
   const isAdmin =
     group !== undefined &&
     me !== null &&
@@ -156,6 +166,7 @@ export default function GroupPage() {
         <GroupHeader
           group={group}
           isAdmin={isAdmin}
+          iOwe={iOwe}
           onSettleUp={() => setSettleOpen(true)}
           onInvite={() => setInviteOpen(true)}
           onEdit={() => setEditOpen(true)}
@@ -200,6 +211,7 @@ export default function GroupPage() {
           <TabsTrigger value="expenses">Expenses</TabsTrigger>
           <TabsTrigger value="balances">Balances</TabsTrigger>
           <TabsTrigger value="totals">Totals</TabsTrigger>
+          <TabsTrigger value="whiteboard">Whiteboard</TabsTrigger>
         </TabsList>
 
         <TabsContent value="expenses">
@@ -226,13 +238,26 @@ export default function GroupPage() {
         <TabsContent value="totals">
           <TotalsView groupId={groupId} />
         </TabsContent>
+
+        <TabsContent value="whiteboard" forceMount>
+          <GroupWhiteboard groupId={groupId} enabled={tab === 'whiteboard'} />
+        </TabsContent>
       </Tabs>
 
       <ExpenseEditorDialog open={editorOpen} onOpenChange={setEditorOpen} groupId={groupId} />
 
       {group && (
         <>
-          <SettleUpDialog open={settleOpen} onOpenChange={setSettleOpen} groupId={group.id} />
+          <SettleUpDialog
+            open={settleOpen}
+            onOpenChange={(open) => {
+              setSettleOpen(open);
+              if (!open) setSettlePrefill(undefined);
+            }}
+            groupId={group.id}
+            prefill={settlePrefill}
+            initialView="list"
+          />
           <InviteDialog
             open={inviteOpen}
             onOpenChange={setInviteOpen}
