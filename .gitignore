@@ -41,12 +41,16 @@ Thumbs.db
 android/
 ios/
 
-# Claude Code local runtime state
-.claude/worktrees/
-.claude/scheduled_tasks.lock
+# Claude Code / company working files — never commit
+.claude/
+.company/
 **/agent-memory/
-.claude/agents/.claude/
-.claude/agents/memory/
+
+# Local tool/session artifacts
+.kilo/
+kilo.json
+session-*.md
+*-local-command-caveat*.txt
 
 # Syncthing local sync metadata
 .stfolder/
